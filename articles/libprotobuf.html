@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+
+<!-- Begin Jekyll SEO tag v2.6.1 -->
+<title>f-viktor@github.io% | Hack the planet.</title>
+<meta name="generator" content="Jekyll v4.0.1" />
+<meta property="og:title" content="f-viktor@github.io%" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Hack the planet." />
+<meta property="og:description" content="Hack the planet." />
+<link rel="canonical" href="http://localhost:4000/articles/libprotobuf.html" />
+<meta property="og:url" content="http://localhost:4000/articles/libprotobuf.html" />
+<meta property="og:site_name" content="f-viktor@github.io%" />
+<script type="application/ld+json">
+{"@type":"WebPage","url":"http://localhost:4000/articles/libprotobuf.html","headline":"f-viktor@github.io%","description":"Hack the planet.","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+
+<script>
+	var items = Array("Tell me about Bane, why does he wear the mask?",
+			  "Nobody ever made profit by \"hacking for fun and profit\"",
+		          "HACK THE PLANEEEEEEEET!444!!!!!",
+			  "It's like that show Becker",
+			  "The Kali-er you become, the more your VM will crash",
+			  "I use Arch btw");
+	var item = items[Math.floor(Math.random() * items.length)];
+</script>	
+
+  </head>
+
+  <body onload="document.getElementById('deep').innerHTML = item;">
+
+    <header>
+      <div class="container">
+        <a id="a-title" href="/">
+          <h1>f-viktor@github.io%</h1>
+        </a>
+
+
+	<h2> <div id="deep"> </div> </h2>
+      </div>
+    </header>
+    <div class="container">
+      <section id="main_content">
+        <h1 id="introduction">Introduction</h1>
+
+<p><a href="https://github.com/google/fuzzing/blob/master/tutorial/libFuzzerTutorial.md">Please</a>
+<a href="https://github.com/google/fuzzing/blob/master/docs/structure-aware-fuzzing.md">read</a>
+<a href="https://bshastry.github.io/2019/01/18/Deconstructing-LPM.html">all</a>
+<a href="http://llvm.org/devmtg/2017-10/slides/Serebryany-Structure-aware%20fuzzing%20for%20Clang%20and%20LLVM%20with%20libprotobuf-mutator.pdf">of</a>
+<a href="https://chromium.googlesource.com/chromium/src/testing/libfuzzer/+/7fe0c11b615abbe1c3d6543cff1474cacd9fb870/efficient_fuzzer.md">these</a>
+<a href="https://llvm.org/docs/LibFuzzer.html">pages</a></p>
+
+<p>Unfortunately there is no quick and easy way to learn this, you’ll have to become reasonably familiar with make/cmake depending on the project and a whole bunch of llvm/clang switches. When starting on a new fuzzzing project the initial investment is relatively big, you’ll have to learn how to build the project, what parts of it are worth fuzzing, and what inputs those parts expect. It’s also worth clarifying that if your project cannot be built via clang (is not C/C++ code) then this approach is not for you. I will be demonstrating this on the <a href="https://github.com/meetecho/janus-gateway">janus-gateway</a> project, which is a pretty cool WebRTC server, but you can use any C/C++ project.</p>
+
+<h1 id="tools">Tools</h1>
+
+<h2 id="libfuzzer">libfuzzer</h2>
+
+<p>https://llvm.org/docs/LibFuzzer.html</p>
+
+<p>libfuzzer is a coverage-based fuzzing engine similar to AFL but with it’s own mutation engine. The main difference is that while AFL primarily works on input pipes, libfuzzer requires you to build separate fuzz target binaries that invoke functions from the target application. This way fuzzing is specific to chosen functions and their dependencies. Can be identified by the call of something like this:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">LLVMFuzzerTestOneInput</span><span class="p">(</span><span class="k">const</span> <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">){</span>
+
+ <span class="n">targetFunctionToBeFuzzed</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+
+<span class="p">}</span>
+</code></pre></div></div>
+<p>Comes bundled in llvm, no additonal isntallation necessary</p>
+
+<h2 id="protocol-buffers">protocol-buffers</h2>
+
+<p>https://developers.google.com/protocol-buffers</p>
+
+<p>Protocol-buffers (protobuf) is an structure description language. You can describe a structure with optional or repeating fields in it. This allows you to have a large set of formally correct but very varied subset or superset of elements from the set of all formally correct entities. With this, you can constrain libfuzzer to only create fuzzed inputs within a correctly defined structure, so that it doesn’t try to send “A”*999 into a field that requires e.g. XML formatted input. This obviously excludese some trivial cases, but also tries less-trivial cases with far higher efficiency. For example:</p>
+
+<div class="language-proto highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">syntax</span> <span class="o">=</span> <span class="s">"proto2"</span><span class="p">;</span>
+
+<span class="kn">package</span> <span class="nn">janus_try</span><span class="p">;</span>
+
+
+<span class="kd">message</span> <span class="nc">Msg</span> <span class="p">{</span>
+
+  <span class="k">optional</span> <span class="kt">float</span> <span class="na">optional_float</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+
+  <span class="k">optional</span> <span class="kt">uint64</span> <span class="na">optional_uint64</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+
+  <span class="k">optional</span> <span class="kt">string</span> <span class="na">optional_string</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>
+
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>This structure can later be compiled into a variety of languages, including C++</p>
+
+<p>Linking this into C++ projects requres the -lprotobuf switch!</p>
+
+<p>It may already be installed on your system, it’s located in /usr/include/google usually.</p>
+
+<h2 id="libprotobuf-mutator">libprotobuf-mutator</h2>
+
+<p>https://github.com/google/libprotobuf-mutator</p>
+
+<p>https://chromium.googlesource.com/chromium/src/+/master/testing/libfuzzer/libprotobuf-mutator.md</p>
+
+<p>Libprotobuf-mutator is what brings these two together. It provides a macro for libfuzzer, that can be called in the fuzztarget to generate protobuf formatted fuzz objects. This looks as such:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include "src/libfuzzer/libfuzzer_macro.h"
+</span>
+<span class="n">DEFINE_PROTO_FUZZER</span><span class="p">(</span><span class="k">const</span> <span class="n">MyMessageType</span><span class="o">&amp;</span> <span class="n">input</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// Code which needs to be fuzzed.</span>
+  <span class="n">ConsumeMyMessageType</span><span class="p">(</span><span class="n">input</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>I found it easier to download the git repo and build it myself, but you can also install it via ninja.</p>
+
+<h1 id="using-the-tools">Using the tools</h1>
+<h2 id="compiling-a-protobuf-file">Compiling a protobuf file</h2>
+<p>Create a test proto file, for example, copy the one above, and compile it. To compile a protobuf file <code class="highlighter-rouge">&lt;test&gt;.proto</code> enter the following command:</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>protoc  -I=$PWD --cpp_out=$PWD $PWD/&lt;test&gt;.proto
+</code></pre></div></div>
+<p>This should create <code class="highlighter-rouge">&lt;test&gt;.pb.cc</code> and <code class="highlighter-rouge">&lt;test&gt;.pb.h</code> files. You’ll later have to return and fill in the .proto file with the required strucutre and re-compile it.</p>
+
+<h2 id="linking-the-protobuf-file-in-the-fuzztarget">Linking the protobuf file in the fuzztarget</h2>
+
+<p>To link the protobuf file, you’ll want to include the header (in this case test.pb.h) it in your <fuzztarget>.cc file like so:</fuzztarget></p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdint.h&gt;
+#include &lt;stddef.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+</span>
+<span class="cp">#include &lt;glib.h&gt;
+#include "../debug.h"
+#include "../sdp-utils.h"
+</span>
+
+<span class="cp">#include "test.pb.h"
+</span>
+<span class="cp">#include "src/libfuzzer/libfuzzer_macro.h"
+</span><span class="n">protobuf_mutator</span><span class="o">::</span><span class="n">protobuf</span><span class="o">::</span><span class="n">LogSilencer</span> <span class="n">log_silincer</span><span class="p">;</span>
+
+<span class="kt">int</span> <span class="n">janus_log_level</span> <span class="o">=</span> <span class="n">LOG_NONE</span><span class="p">;</span>
+<span class="n">gboolean</span> <span class="n">janus_log_timestamps</span> <span class="o">=</span> <span class="n">FALSE</span><span class="p">;</span>
+<span class="n">gboolean</span> <span class="n">janus_log_colors</span> <span class="o">=</span> <span class="n">FALSE</span><span class="p">;</span>
+<span class="kt">int</span> <span class="n">refcount_debug</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+<span class="n">DEFINE_PROTO_FUZZER</span><span class="p">(</span><span class="k">const</span> <span class="n">janus_try</span><span class="o">::</span><span class="n">Msg</span><span class="o">&amp;</span> <span class="n">data</span><span class="p">)</span> <span class="p">{</span>
+
+        <span class="k">static</span> <span class="n">PostProcessorRegistration</span> <span class="n">reg</span> <span class="o">=</span> <span class="p">{</span>
+      <span class="p">[](</span><span class="n">janus_try</span><span class="o">::</span><span class="n">Msg</span><span class="o">*</span> <span class="n">message</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">seed</span><span class="p">)</span> <span class="p">{</span>
+              <span class="kt">int</span> <span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">;</span>
+      <span class="p">}};</span>
+        <span class="kt">char</span> <span class="n">error_str</span><span class="p">[</span><span class="mi">512</span><span class="p">];</span>
+        <span class="kt">int</span> <span class="n">size</span> <span class="o">=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">data</span><span class="p">);</span>
+        <span class="kt">char</span> <span class="n">sdp_string</span><span class="p">[</span><span class="n">size</span><span class="p">];</span>
+        <span class="n">memcpy</span><span class="p">(</span><span class="n">sdp_string</span><span class="p">,</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">data</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+
+
+         <span class="c1">// Code which needs to be fuzzed.</span>
+        <span class="n">janus_sdp</span> <span class="o">*</span><span class="n">parsed_sdp</span> <span class="o">=</span> <span class="n">janus_sdp_parse</span><span class="p">((</span><span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">sdp_string</span><span class="p">,</span> <span class="n">error_str</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">error_str</span><span class="p">));</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>Don’t worry about the rest of the file for now. You’ll also need to link the <code class="highlighter-rouge">&lt;test&gt;.pb.cc</code> file at linking time, something like this:</p>
+
+<ol>
+  <li>Compiling fuzztarget.cc
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang -c -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fsanitize-address-use-after-scope -fno-sanitize-recover=undefined -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION  -fsanitize=fuzzer-no-link -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include  -I. -I./libprotobuf-mutator/ -I/home/dna/git/janus/janus-protobuf /home/dna/git/janus/janus-protobuf/fuzzers/fuzztarget.cc -o /home/dna/git/janus/janus-protobuf/fuzzers/fuzztarget.o
+</code></pre></div>    </div>
+  </li>
+  <li>Compiling test.pb.cc
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang -c -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fsanitize-address-use-after-scope -fno-sanitize-recover=undefined -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION  -fsanitize=fuzzer-no-link -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include  -I. -I./libprotobuf-mutator/ -I/home/dna/git/janus/janus-protobuf test.pb.cc -o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o
+</code></pre></div>    </div>
+  </li>
+  <li>Linking them together (note the -lprotobuf switch at the end)
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fsanitize-address-use-after-scope  -fsanitize=fuzzer /home/dna/git/janus/janus-protobuf/fuzzers/fuzztarget.o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o -o /home/dna/git/janus/janus-protobuf/fuzzers/out/fuzztarget  /home/dna/git/janus/janus-protobuf/fuzzers/janus-lib.a -lglib-2.0 -ljansson -lz  -pthread -lprotobuf
+</code></pre></div>    </div>
+  </li>
+</ol>
+
+<h2 id="building-libprotobuf-mutator-you-can-skip-this-if-you-installed-it">building libprotobuf-mutator (you can skip this if you installed it)</h2>
+<ol>
+  <li>cd into the home directory</li>
+  <li>cmake</li>
+  <li>./configure</li>
+  <li>make</li>
+</ol>
+
+<p>you should now have a ./libprotobuf-mutator/src/libprotobuf-mutator.a file.</p>
+
+<h2 id="linking-libprotobuf-mutator">linking libprotobuf-mutator</h2>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fsanitize-address-use-after-scope  -fsanitize=fuzzer /home/dna/git/janus/janus-protobuf/fuzzers/fuzztarget.o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o /home/dna/git/janus/janus-protobuf/fuzzers/libprotobuf-mutator/src/libprotobuf-mutator.a -o /home/dna/git/janus/janus-protobuf/fuzzers/out/fuzztarget  /home/dna/git/janus/janus-protobuf/fuzzers/janus-lib.a -lglib-2.0 -ljansson -lz  -pthread -lprotobuf
+</code></pre></div></div>
+
+<p>Also add this to the build path of your fuzztarget.cc</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include "src/libfuzzer/libfuzzer_macro.h"
+</span></code></pre></div></div>
+<p>then do</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang -c -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fsanitize-address-use-after-scope -fno-sanitize-recover=undefined -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION  -fsanitize=fuzzer-no-link -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include  -I. -I./libprotobuf-mutator/ -I/home/dna/git/janus/janus-protobuf test.pb.cc -o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o
+</code></pre></div></div>
+
+<p>you’ll also have to link libfuzzer-mutator.o and libfuzzer-macr.o separately (these are all redundant if you already installed libprotobuf-mutator and included it via a flag).</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fsanitize-address-use-after-scope  -fsanitize=fuzzer /home/dna/git/janus/janus-protobuf/fuzzers/fuzztarget.o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o  /home/dna/git/janus/janus-protobuf/fuzzers/libfuzzer_macro.o /home/dna/git/janus/janus-protobuf/fuzzers/libfuzzer_mutator.o /home/dna/git/janus/janus-protobuf/fuzzers/libprotobuf-mutator/src/libprotobuf-mutator.a  -o /home/dna/git/janus/janus-protobuf/fuzzers/out/fuzztarget  /home/dna/git/janus/janus-protobuf/fuzzers/janus-lib.a -lglib-2.0 -ljansson -lz  -pthread -lprotobuf
+</code></pre></div></div>
+
+<p>At this point, the linking step should only complain about not knowing the actual function you are trying to fuzz, and like some weird issue about a single test function being unknown. These only should happen if your target application is in C, and your fuzzer is in C++ (C is not supported natively by the fuzzer).</p>
+
+<h1 id="linking-all-of-this-to-your-target-application">Linking all of this to your target application</h1>
+
+<p>You’ll have to find your targeted function and all it’s dependencies for this to work. Ideally you would compile this into a single .a static library to be included at linking.</p>
+
+<p>you can ccreate a .a archive via</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ar rcs outputfile.a input.o files.o and.o other.o libs.o
+</code></pre></div></div>
+<p>Here’s how you’d do that:</p>
+
+<ol>
+  <li>pick a function you want to fuzz. In this case it will be janus_sdp_parse()</li>
+  <li>Identify the file that implements that function. In this case, sdp-utils.c</li>
+  <li>Based on the makefile, this file will compile into janus-sdp-utils.o</li>
+  <li>also compile any other dependencies you identify if necessary. I found it easier to just run make, and chose from the resuling files.</li>
+  <li>Run ar rcs output_static_lib.a janus-sdp-utils.o other.o dependencies.o and.o stuff.o</li>
+  <li>link the resulting static library at the linking of your fuzzer as such:</li>
+</ol>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fsanitize-address-use-after-scope  -fsanitize=fuzzer /home/dna/git/janus/janus-protobuf/fuzzers/fuzztarget.o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o  /home/dna/git/janus/janus-protobuf/fuzzers/libfuzzer_macro.o /home/dna/git/janus/janus-protobuf/fuzzers/libfuzzer_mutator.o /home/dna/git/janus/janus-protobuf/fuzzers/libprotobuf-mutator/src/libprotobuf-mutator.a  -o /home/dna/git/janus/janus-protobuf/fuzzers/out/fuzztarget  /home/dna/git/janus/janus-protobuf/fuzzers/janus-lib.a -lglib-2.0 -ljansson -lz  -pthread -lprotobuf
+</code></pre></div></div>
+<p>If your application was made in C, then you’ll also have to modify the target function and add directives</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// this is here so that the c++ fuzzer compiler understands the block as c++
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+janus_sdp *janus_sdp_parse(const char *sdp, char *error, size_t errlen);
+
+#ifdef __cplusplus
+}
+#endif
+</code></pre></div></div>
+
+<p>it is much nicer if you actually do this around your <code class="highlighter-rouge">#includes</code> inststead</p>
+
+<p>This will make the C++ compiler of the fuzzer see the target function.</p>
+
+<p>If you do this correctly, the resulting output binary should be your fuzzer.</p>
+
+<h2 id="contents-of-fuzztarget">contents of fuzztarget</h2>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdint.h&gt;
+#include &lt;stddef.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+</span>
+<span class="cp">#include &lt;glib.h&gt;
+#include "../debug.h"
+#include "../sdp-utils.h"
+</span>
+
+<span class="cp">#include "sdp.pb.h"
+#include "src/libfuzzer/libfuzzer_macro.h"
+</span><span class="n">protobuf_mutator</span><span class="o">::</span><span class="n">protobuf</span><span class="o">::</span><span class="n">LogSilencer</span> <span class="n">log_silincer</span><span class="p">;</span>
+
+
+<span class="kt">int</span> <span class="n">janus_log_level</span> <span class="o">=</span> <span class="n">LOG_NONE</span><span class="p">;</span>
+<span class="n">gboolean</span> <span class="n">janus_log_timestamps</span> <span class="o">=</span> <span class="n">FALSE</span><span class="p">;</span>
+<span class="n">gboolean</span> <span class="n">janus_log_colors</span> <span class="o">=</span> <span class="n">FALSE</span><span class="p">;</span>
+<span class="kt">int</span> <span class="n">refcount_debug</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+
+<span class="n">std</span><span class="o">::</span><span class="n">string</span> <span class="nf">convertProtobufToSDP</span><span class="p">(</span><span class="n">session_description_protocol</span><span class="o">::</span><span class="n">SDP</span> <span class="n">data</span><span class="p">){</span>
+
+<span class="c1">//I defined a pretty big and ugly function here to cnvert a protobuf class into a string that the targeted function expects</span>
+
+<span class="p">}</span>
+
+<span class="n">DEFINE_PROTO_FUZZER</span><span class="p">(</span><span class="k">const</span> <span class="n">session_description_protocol</span><span class="o">::</span><span class="n">SDP</span><span class="o">&amp;</span> <span class="n">data</span><span class="p">)</span> <span class="p">{</span>
+        <span class="cm">/* Free resources */</span>
+        <span class="k">static</span> <span class="n">PostProcessorRegistration</span> <span class="n">reg</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="p">[](</span><span class="n">session_description_protocol</span><span class="o">::</span><span class="n">SDP</span><span class="o">*</span> <span class="n">message</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">seed</span><span class="p">)</span> <span class="p">{</span>
+             <span class="c1">//message-&gt;set_version(0); //sets version to int 0, and will be visible in corpus. (try other values tho :D)</span>
+        <span class="p">}};</span>
+
+        <span class="c1">//post processing on protobuf messages</span>
+        <span class="kt">char</span> <span class="n">error_str</span><span class="p">[</span><span class="mi">512</span><span class="p">];</span>
+
+        <span class="c1">//convert protobuf to valid string sdp</span>
+        <span class="n">std</span><span class="o">::</span><span class="n">string</span> <span class="n">ret_string</span> <span class="o">=</span> <span class="n">convertProtobufToSDP</span><span class="p">(</span><span class="n">data</span><span class="p">);</span>
+        <span class="kt">char</span> <span class="n">sdp_string</span><span class="p">[</span><span class="n">ret_string</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="o">+</span><span class="mi">1</span><span class="p">];</span>
+        <span class="n">strcpy</span><span class="p">(</span><span class="n">sdp_string</span><span class="p">,</span><span class="n">ret_string</span><span class="p">.</span><span class="n">c_str</span><span class="p">());</span>
+
+        <span class="c1">// Code which needs to be fuzzed</span>
+        <span class="n">janus_sdp</span> <span class="o">*</span><span class="n">parsed_sdp</span> <span class="o">=</span> <span class="n">janus_sdp_parse</span><span class="p">((</span><span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">sdp_string</span><span class="p">,</span> <span class="n">error_str</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">error_str</span><span class="p">));</span>
+        <span class="kt">char</span> <span class="o">*</span><span class="n">generated_sdp</span> <span class="o">=</span> <span class="n">janus_sdp_write</span><span class="p">(</span><span class="n">parsed_sdp</span><span class="p">);</span>
+
+        <span class="c1">//if you dont free stuff you are going to run out of memory</span>
+        <span class="n">janus_sdp_destroy</span><span class="p">(</span><span class="n">parsed_sdp</span><span class="p">);</span>
+        <span class="n">g_free</span><span class="p">(</span><span class="n">generated_sdp</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h1 id="setting-up-your-proto-file">Setting up your .proto file</h1>
+
+<p>You basically want to describe your desired format in google’s protocol-buffer language. For example the SDP message protocol would look simething like this:</p>
+
+<div class="language-proto highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">syntax</span> <span class="o">=</span> <span class="s">"proto2"</span><span class="p">;</span>
+<span class="kn">package</span> <span class="nn">session_description_protocol</span><span class="p">;</span>
+
+<span class="kd">message</span> <span class="nc">SDP</span> <span class="p">{</span>
+
+  <span class="c1">// v=  (protocol version number, currently only 0) "v=0\n"</span>
+  <span class="k">required</span> <span class="kt">int32</span> <span class="na">version</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+
+  <span class="kd">message</span> <span class="nc">Originator</span> <span class="p">{</span>
+        <span class="k">required</span> <span class="kt">string</span> <span class="na">name</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+        <span class="k">required</span> <span class="kt">int32</span> <span class="na">username</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+        <span class="k">required</span> <span class="kt">int32</span> <span class="na">id</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>
+        <span class="k">required</span> <span class="kt">string</span> <span class="na">version</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span>
+        <span class="k">required</span> <span class="kt">string</span> <span class="na">networkaddr</span> <span class="o">=</span><span class="mi">5</span><span class="p">;</span> <span class="c1">// maybe have it as int32 and split it apart in post?</span>
+  <span class="p">}</span>
+
+  <span class="c1">// o=  (originator and session identifier : username, id, version number, network address)</span>
+  <span class="k">required</span> <span class="n">Originator</span> <span class="na">originator</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+
+  <span class="c1">// s=  (session name : mandatory with at least one UTF-8-encoded character) "s=-"</span>
+  <span class="k">required</span> <span class="kt">string</span> <span class="na">session</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>
+
+  <span class="c1">// i=* (session title or short information)</span>
+  <span class="k">optional</span> <span class="kt">string</span> <span class="na">info</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span>
+
+  <span class="c1">// u=* (URI of description)</span>
+  <span class="k">optional</span> <span class="kt">string</span> <span class="na">uri</span> <span class="o">=</span> <span class="mi">5</span><span class="p">;</span>
+
+  <span class="c1">// e=* (zero or more email address with optional name of contacts)</span>
+  <span class="k">repeated</span> <span class="kt">string</span> <span class="na">email</span> <span class="o">=</span> <span class="mi">6</span><span class="p">;</span>
+
+  <span class="c1">// p=* (zero or more phone number with optional name of contacts)</span>
+  <span class="k">repeated</span> <span class="kt">string</span> <span class="na">phoneNum</span> <span class="o">=</span> <span class="mi">7</span><span class="p">;</span>
+
+  <span class="c1">// c=* (connection information??not required if included in all media)</span>
+  <span class="k">optional</span> <span class="kt">string</span> <span class="na">connInfo</span> <span class="o">=</span> <span class="mi">8</span><span class="p">;</span>
+
+  <span class="c1">// b=* (zero or more bandwidth information lines)</span>
+  <span class="k">repeated</span> <span class="kt">string</span> <span class="na">bandwidthInfo</span> <span class="o">=</span> <span class="mi">9</span><span class="p">;</span>
+
+  <span class="c1">// One or more Time descriptions ("t=" and "r=" lines; see below)</span>
+  <span class="kd">message</span> <span class="nc">TimeDescription</span><span class="p">{</span>
+
+        <span class="c1">// t=  (time the session is active)</span>
+        <span class="k">required</span> <span class="kt">int32</span> <span class="na">time</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+
+        <span class="c1">// r=* (zero or more repeat times) change to string for other format?</span>
+        <span class="k">repeated</span> <span class="kt">int32</span> <span class="na">times</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+  <span class="p">}</span>
+
+  <span class="k">required</span> <span class="n">TimeDescription</span> <span class="na">mandatoryTime</span> <span class="o">=</span> <span class="mi">10</span><span class="p">;</span>
+  <span class="k">repeated</span> <span class="n">TimeDescription</span> <span class="na">optionalTime</span> <span class="o">=</span> <span class="mi">11</span><span class="p">;</span>
+
+  <span class="c1">// z=* (time zone adjustments)</span>
+  <span class="k">optional</span> <span class="kt">int32</span> <span class="na">zoneAdjustment</span> <span class="o">=</span> <span class="mi">12</span><span class="p">;</span>
+
+  <span class="c1">// k=* (encryption key)</span>
+  <span class="k">optional</span> <span class="kt">string</span> <span class="na">key</span> <span class="o">=</span> <span class="mi">13</span><span class="p">;</span>
+
+  <span class="c1">// a=* (zero or more session attribute lines)</span>
+  <span class="k">repeated</span> <span class="kt">string</span> <span class="na">attribute</span> <span class="o">=</span><span class="mi">14</span><span class="p">;</span>
+
+  <span class="c1">// Zero or more Media descriptions (each one starting by an "m=" line; see below)</span>
+  <span class="kd">message</span> <span class="nc">MediaDescription</span> <span class="p">{</span>
+        <span class="c1">// m=  (media name and transport address)</span>
+        <span class="k">required</span> <span class="kt">string</span> <span class="na">mediaName</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+
+        <span class="c1">// i=* (media title or information field)</span>
+        <span class="k">optional</span> <span class="kt">string</span> <span class="na">mediaInfo</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+
+        <span class="c1">// c=* (connection information ?? optional if included at session level)</span>
+        <span class="k">optional</span> <span class="kt">string</span> <span class="na">mediaConnInfo</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>
+
+        <span class="c1">// b=* (zero or more bandwidth information lines)}</span>
+        <span class="k">repeated</span> <span class="kt">string</span> <span class="na">mediaBandwidthInfo</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span>
+
+        <span class="c1">// k=* (encryption key)</span>
+        <span class="k">optional</span> <span class="kt">string</span> <span class="na">mediaKey</span> <span class="o">=</span> <span class="mi">5</span><span class="p">;</span>
+
+        <span class="c1">//    a=* (zero or more media attribute lines ?? overriding the Session attribute lines)</span>
+        <span class="k">repeated</span> <span class="kt">string</span> <span class="na">mediaAttribute</span> <span class="o">=</span> <span class="mi">6</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="k">repeated</span> <span class="n">MediaDescription</span> <span class="na">mediaDescription</span> <span class="o">=</span> <span class="mi">15</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The more accurate your format is, the less unnecessary tests are performed, but you can leave in some incorrect formats if you think the parser my crash on those errors.</p>
+
+<h1 id="running-the-fuzzer">Running the fuzzer</h1>
+
+<p>Running the fuzzer is basically the same as running libfuzzer</p>
+
+<h1 id="checking-for-coverage">Checking for coverage</h1>
+<p>To see what you’re doing and what parts of the target function is actually hit, you should probably use llvm-cov</p>
+
+<p>For example with janus, this would look as follows:</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./out/janus_cover ./out/janus_fuzzer_corpus/* &amp;&amp; \
+llvm-profdata merge -sparse *.profraw -o default.profdata &amp;&amp; \
+llvm-cov show ./out/janus_cover -instr-profile=default.profdata -name=janus_process_incoming_admin_request
+</code></pre></div></div>
+
+<p>This will visualize how many times each line of code is hit. Red means that it was hit 0 times = bad</p>
+
+<p>For this to work you’ll have to build a separate binary with the following flags:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>COVERAGE_CFLAGS="-O1 -fno-omit-frame-pointer -g -ggdb3 -fprofile-instr-generate -fcoverage-mapping"
+</code></pre></div></div>
+<p>Everything else is the same, just set these when compiling everything instead of the <code class="highlighter-rouge">-fsanitize</code> flags</p>
+
+<p>After your fuzzer ran a bit and you have a lot of corpus files you can just run the above command on the folder and viola.
+If you modify the source code, be sure to recompile the coverage binary too.</p>
+
+<h1 id="to-be-continued">&lt;=To be continued=</h1>
+
+      </section>
+    </div>
+
+  </body>
+</html>
