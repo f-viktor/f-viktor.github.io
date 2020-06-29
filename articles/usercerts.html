@@ -8,7 +8,7 @@
 
 <!-- Begin Jekyll SEO tag v2.6.1 -->
 <title>f-viktor@github.io% | Hack the planet.</title>
-<meta name="generator" content="Jekyll v4.0.1" />
+<meta name="generator" content="Jekyll v4.1.1" />
 <meta property="og:title" content="f-viktor@github.io%" />
 <meta property="og:locale" content="en_US" />
 <meta name="description" content="Hack the planet." />
@@ -17,7 +17,7 @@
 <meta property="og:url" content="http://localhost:4000/articles/usercerts.html" />
 <meta property="og:site_name" content="f-viktor@github.io%" />
 <script type="application/ld+json">
-{"@type":"WebPage","url":"http://localhost:4000/articles/usercerts.html","headline":"f-viktor@github.io%","description":"Hack the planet.","@context":"https://schema.org"}</script>
+{"description":"Hack the planet.","url":"http://localhost:4000/articles/usercerts.html","@type":"WebPage","headline":"f-viktor@github.io%","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 
 <script>
@@ -26,7 +26,10 @@
 		          "HACK THE PLANEEEEEEEET!444!!!!!",
 			  "It's like that show Becker",
 			  "The Kali-er you become, the more your VM will crash",
-			  "I use Arch btw");
+			  "I use Arch btw",
+			  "God is dead. God wemains dead. And we have kiwwed him.",
+			  "I like elephants and God likes elephants",
+			  "I will stop the motor of the world");
 	var item = items[Math.floor(Math.random() * items.length)];
 </script>	
 
@@ -48,7 +51,7 @@
       <section id="main_content">
         <h1 id="the-411">The 411</h1>
 <p>Let’s say you proxied your application to inspect HTTPS traffic, but all you see in your proxy is:</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>The client failed to negotiate an SSL connection to something.com:443: Received...
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>The client failed to negotiate an SSL connection to something.com:443: Received...
 </code></pre></div></div>
 <p>But you are sure the application does not have SSL pinning, and you already installed your CA certificate on the device.</p>
 
@@ -58,9 +61,9 @@
 (based on a true <a href="https://stackoverflow.com/questions/38770126/has-android-changed-ssl-configuration-in-api-24/38770284#38770284">stackoverflow</a> ticket)</p>
 
 <p>decompile the apk using:</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>apktool d appname.apk
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>apktool d appname.apk
 </code></pre></div></div>
-<p>create the file <code class="highlighter-rouge">appname/res/xml/network_security_config.xml</code></p>
+<p>create the file <code class="language-plaintext highlighter-rouge">appname/res/xml/network_security_config.xml</code></p>
 
 <p>Write in the file:</p>
 <div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="utf-8"?&gt;</span>
@@ -74,21 +77,21 @@
     <span class="nt">&lt;/base-config&gt;</span>
 <span class="nt">&lt;/network-security-config&gt;</span>
 </code></pre></div></div>
-<p>modify <code class="highlighter-rouge">appname/AndroidManifest.xml</code></p>
+<p>modify <code class="language-plaintext highlighter-rouge">appname/AndroidManifest.xml</code></p>
 
-<p>inside the <code class="highlighter-rouge">&lt;application  ...... &gt;</code> tag add the following:</p>
+<p>inside the <code class="language-plaintext highlighter-rouge">&lt;application  ...... &gt;</code> tag add the following:</p>
 <div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>android:networkSecurityConfig="@xml/network_security_config"
 </code></pre></div></div>
 <p>should look something like this:</p>
 <div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;application</span> <span class="na">android:allowBackup=</span><span class="s">"true"</span> <span class="na">android:appComponentFactory=</span><span class="s">"android.support.v4.app.CoreComponentFactory"</span> <span class="na">android:debuggable=</span><span class="s">"true"</span> <span class="na">android:icon=</span><span class="s">"@mipmap/ic_launcher"</span> <span class="na">android:label=</span><span class="s">"@string/app_name"</span> <span class="na">android:name=</span><span class="s">"com.ddnative.App"</span> <span class="na">android:roundIcon=</span><span class="s">"@mipmap/ic_launcher_round"</span> <span class="na">android:supportsRtl=</span><span class="s">"false"</span> <span class="na">android:theme=</span><span class="s">"@style/AppTheme"</span> <span class="na">android:networkSecurityConfig=</span><span class="s">"@xml/network_security_config"</span><span class="nt">&gt;</span>
 </code></pre></div></div>
 <p>Recompile the apk with</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>apktool b appname -o trust.apk
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>apktool b appname -o trust.apk
 </code></pre></div></div>
-<p>(if it fails with something weird, try adding <code class="highlighter-rouge">--use-aapt2</code>)</p>
+<p>(if it fails with something weird, try adding <code class="language-plaintext highlighter-rouge">--use-aapt2</code>)</p>
 
 <p><a href="https://github.com/patrickfav/uber-apk-signer/releases/tag/v1.0.0">sign the apk</a>:</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>java -jar uber-apk-signer-1.0.0.jar --apks trust.apk
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>java -jar uber-apk-signer-1.0.0.jar --apks trust.apk
 </code></pre></div></div>
 <p>And you’re done</p>
 

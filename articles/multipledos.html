@@ -8,7 +8,7 @@
 
 <!-- Begin Jekyll SEO tag v2.6.1 -->
 <title>f-viktor@github.io% | Hack the planet.</title>
-<meta name="generator" content="Jekyll v4.0.1" />
+<meta name="generator" content="Jekyll v4.1.1" />
 <meta property="og:title" content="f-viktor@github.io%" />
 <meta property="og:locale" content="en_US" />
 <meta name="description" content="Hack the planet." />
@@ -17,7 +17,7 @@
 <meta property="og:url" content="http://localhost:4000/articles/multipledos.html" />
 <meta property="og:site_name" content="f-viktor@github.io%" />
 <script type="application/ld+json">
-{"@type":"WebPage","url":"http://localhost:4000/articles/multipledos.html","headline":"f-viktor@github.io%","description":"Hack the planet.","@context":"https://schema.org"}</script>
+{"description":"Hack the planet.","url":"http://localhost:4000/articles/multipledos.html","@type":"WebPage","headline":"f-viktor@github.io%","@context":"https://schema.org"}</script>
 <!-- End Jekyll SEO tag -->
 
 <script>
@@ -26,7 +26,10 @@
 		          "HACK THE PLANEEEEEEEET!444!!!!!",
 			  "It's like that show Becker",
 			  "The Kali-er you become, the more your VM will crash",
-			  "I use Arch btw");
+			  "I use Arch btw",
+			  "God is dead. God wemains dead. And we have kiwwed him.",
+			  "I like elephants and God likes elephants",
+			  "I will stop the motor of the world");
 	var item = items[Math.floor(Math.random() * items.length)];
 </script>	
 
@@ -68,7 +71,7 @@
 
 <h1 id="cve-2020-10573-double-mutex-unlock">CVE-2020-10573 Double mutex unlock</h1>
 
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Attempt to unlock mutex that was not locked
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Attempt to unlock mutex that was not locked
 ==170860== ERROR: libFuzzer: deadly signal
 #0 0x55c73273cacb in __sanitizer_print_stack_trace (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x38aacb)
 #1 0x55c732690099 in fuzzer::PrintStackTrace() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2de099)
@@ -136,7 +139,7 @@ Upon attempting to unlock an already unlocked mutex, the server will crash.</p>
 
 <p><img src="/img/multipledos/574_c.png" alt="copypaste" /></p>
 
-<p>So if you forget to put a logger paramter into your request, <code class="highlighter-rouge">json_t *logger</code> will be null (line 2129) and then it gets into <code class="highlighter-rouge">g_hash_table_lookup(logger, logger_value)</code> which will make it into a null pointer dereference.</p>
+<p>So if you forget to put a logger paramter into your request, <code class="language-plaintext highlighter-rouge">json_t *logger</code> will be null (line 2129) and then it gets into <code class="language-plaintext highlighter-rouge">g_hash_table_lookup(logger, logger_value)</code> which will make it into a null pointer dereference.</p>
 
 <h1 id="intermission-2">Intermission 2</h1>
 
@@ -144,7 +147,7 @@ Upon attempting to unlock an already unlocked mutex, the server will crash.</p>
 
 <h1 id="cve-2020-10575--race-condition-in-videocall-plugin-1">CVE-2020-10575  Race condition in Videocall plugin 1</h1>
 
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>=================================================================
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>=================================================================
 ==113679==ERROR: AddressSanitizer: heap-use-after-free on address 0x603000bcd3a0 at pc 0x5624e9399bfb bp 0x7f0445252600 sp 0x7f0445251db0
 READ of size 2 at 0x603000bcd3a0 thread T9
 #0 0x5624e9399bfa in __interceptor_strlen.part.0 (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x324bfa)
@@ -207,7 +210,7 @@ artifact_prefix='./'; Test unit written to ./crash-248acfbf7dc41f526708ee212e708
 
 <p>but also</p>
 
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>=================================================================
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>=================================================================
 ==327115==ERROR: AddressSanitizer: heap-use-after-free on address 0x6030008cfb30 at pc 0x564b07196f46 bp 0x7fad060395b0 sp 0x7fad06038d60
 READ of size 1 at 0x6030008cfb30 thread T7
 #0 0x564b07196f45 in __interceptor_strcmp.part.0 (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x353f45)
@@ -294,7 +297,7 @@ artifact_prefix='./signaling_fuzzer-'; Test unit written to ./signaling_fuzzer-c
 <p>So finally we have something that accesses invalid memory, which is neat, however it’s so complicated to reproduce that making a consistent exploit out of it seems nearly impossible.</p>
 
 <h1 id="cve-2020-10577--race-condition-in-videocall-plugin-2">CVE-2020-10577  Race condition in Videocall plugin 2</h1>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>==402962==ERROR: AddressSanitizer: heap-use-after-free on address 0x60400000aa50 at pc 0x55a7f5cf5c33 bp 0x7f5264a6bcd0 sp 0x7f5264a6bcc8
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>==402962==ERROR: AddressSanitizer: heap-use-after-free on address 0x60400000aa50 at pc 0x55a7f5cf5c33 bp 0x7f5264a6bcd0 sp 0x7f5264a6bcc8
 READ of size 8 at 0x60400000aa50 thread T9
 #11413 REDUCE cov: 452 ft: 1939 corp: 187/48Kb lim: 6156 exec/s: 407 rss: 670Mb L: 143/1362 MS: 1 CustomCrossOver-
 #0 0x55a7f5cf5c32 in janus_session_notify_event /home/fuzzmachine/git/janus/janus-signaling/janus.c:678:110
@@ -380,7 +383,7 @@ artifact_prefix='./'; Test unit written to ./crash-6fc4b842aed37586b95308decdd72
 
 <p><img src="/img/multipledos/577_a.png" alt="source" /></p>
 
-<p>The problem is that <code class="highlighter-rouge">janus_request_destroy</code> may decide to destroy your request(session-&gt;source) halfway through <code class="highlighter-rouge">janus_session_notify_event</code></p>
+<p>The problem is that <code class="language-plaintext highlighter-rouge">janus_request_destroy</code> may decide to destroy your request(session-&gt;source) halfway through <code class="language-plaintext highlighter-rouge">janus_session_notify_event</code></p>
 
 <p><img src="/img/multipledos/576_c.png" alt="notify_me_senpai" /></p>
 
@@ -392,7 +395,7 @@ artifact_prefix='./'; Test unit written to ./crash-6fc4b842aed37586b95308decdd72
 
 <h1 id="cve-2020-10576--race-condition-in-voicemail-plugin">CVE-2020-10576  Race condition in Voicemail plugin</h1>
 
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>==910312==ERROR: AddressSanitizer: heap-use-after-free on address 0x60400045a7a0 at pc 0x55bcf4719dd2 bp 0x7f9231e86d50 sp 0x7f9231e86d48
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>==910312==ERROR: AddressSanitizer: heap-use-after-free on address 0x60400045a7a0 at pc 0x55bcf4719dd2 bp 0x7f9231e86d50 sp 0x7f9231e86d48
 READ of size 4 at 0x60400045a7a0 thread T6
 #0 0x55bcf4719dd1 in janus_plugin_session_is_alive /home/fuzzmachine/git/janus/janus-trace/ice.c:574:4
 #1 0x55bcf4804e4d in janus_plugin_end_session /home/fuzzmachine/git/janus/janus-trace/janus.c:3641:6
@@ -470,7 +473,7 @@ MS: 1 CustomCrossOver-; base unit: 912fb41c9fad4c60e51a5b7a699768473d3bc709
 artifact_prefix='./signaling_fuzzer-'; Test unit written to ./signaling_fuzzer-crash-d91f2b671489b9a4efaccdaa469dfe45a16e2860
 </code></pre></div></div>
 <p>or</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>=================================================================
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>=================================================================
 ==930472==ERROR: AddressSanitizer: heap-use-after-free on address 0x60b000e686d8 at pc 0x7f752cd87d8c bp 0x7f752cd60fd0 sp 0x7f752cd60fc8
 READ of size 4 at 0x60b000e686d8 thread T6
 #0 0x7f752cd87d8b in janus_voicemail_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:834:15
@@ -543,7 +546,7 @@ Left alloca redzone: ca
 Right alloca redzone: cb
 </code></pre></div></div>
 <p>or</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>plugins/janus_voicemail.c:235:3: runtime error: member access within null pointer of type 'janus_voicemail_session' (aka 'struct janus_voicemail_session')
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>plugins/janus_voicemail.c:235:3: runtime error: member access within null pointer of type 'janus_voicemail_session' (aka 'struct janus_voicemail_session')
 SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior plugins/janus_voicemail.c:235:3 in
 AddressSanitizer:DEADLYSIGNAL
 =================================================================
@@ -569,7 +572,7 @@ MS: 2 CustomCrossOver-CustomCrossOver-; base unit: f8e6f7cea8d6274d559b337d6474f
 artifact_prefix='./'; Test unit written to ./crash-da39a3ee5e6b4b0d3255bfef95601890afd80709
 </code></pre></div></div>
 <p>or</p>
-<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ice.c:574:4: runtime error: member access within misaligned address 0x604054000084 for type 'janus_plugin_session' (aka 'struct janus_plugin_session'), which requires 8 byte alignment
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ice.c:574:4: runtime error: member access within misaligned address 0x604054000084 for type 'janus_plugin_session' (aka 'struct janus_plugin_session'), which requires 8 byte alignment
 0x604054000084: note: pointer points here
 &lt;memory cannot be printed&gt;
 SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior ice.c:574:4 in
@@ -601,17 +604,17 @@ MS: 8 ChangeBit-Custom-CustomCrossOver-ShuffleBytes-ChangeBinInt-Custom-CustomCr
 
 <p>The issue is very similar to the previous one, also failing on the session-&gt;source deref but in a different plugin.</p>
 
-<p>The problem is still that <code class="highlighter-rouge">janus_request_destroy</code> may decide to destroy your request(session-&gt;source) halfway through <code class="highlighter-rouge">janus_session_notify_event</code> (line 678)</p>
+<p>The problem is still that <code class="language-plaintext highlighter-rouge">janus_request_destroy</code> may decide to destroy your request(session-&gt;source) halfway through <code class="language-plaintext highlighter-rouge">janus_session_notify_event</code> (line 678)</p>
 
 <p><img src="/img/multipledos/576_c.png" alt="notify_me_senpai" /></p>
 
-<p>or, even worse, at <code class="highlighter-rouge">janus_session_notify_event</code> (line 681) causing a null pointer deref and segfault</p>
+<p>or, even worse, at <code class="language-plaintext highlighter-rouge">janus_session_notify_event</code> (line 681) causing a null pointer deref and segfault</p>
 
 <p><img src="/img/multipledos/576_d.png" alt="segfault" /></p>
 
 <p>or if the address was already re-used it can even cause a memory misalignment issue.</p>
 
-<p>If we could spray the heap just right, control the race condition to always happen on line 681, and overwrite the address on <code class="highlighter-rouge">session-&gt;source-&gt;transport-&gt;send_message()</code> with just the right thing, we could have control!</p>
+<p>If we could spray the heap just right, control the race condition to always happen on line 681, and overwrite the address on <code class="language-plaintext highlighter-rouge">session-&gt;source-&gt;transport-&gt;send_message()</code> with just the right thing, we could have control!</p>
 
 <p>While this is all very promising, after a weeks of trying to consistently reproduce this issue, I still only managed to get it semi-consistently. The otherwise amazing <a href="https://rr-project.org/">rr debug</a> project also doesn’t like to dance with my binaries.</p>
 
