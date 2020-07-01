@@ -188,6 +188,7 @@ sysctl net.ipv4.ip_forward=1
 iptables -t nat -A POSTROUTING -o $INTERNET -j MASQUERADE
 iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 iptables -A FORWARD -i wlan_ap -o $INTERNET -j ACCEPT
+sysctl -w net.ipv4.conf.all.route_localnet=1
 sudo sysctl net/ipv4/ip_unprivileged_port_start=443
 systemctl start dnsmasq
 
