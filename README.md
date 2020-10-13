@@ -1,15 +1,10 @@
 #install env:
-install ruby-devel?  
+install ruby
 gen install jekyll  
 gem install bundler  
-bundle install  
-
-
-to rebuild:
-
-jekyll serve  
-
-add rubygems to path
 
 export PATH=$PATH:~/.gem/ruby/2.7.0/bin/
+bundle install  
 
+to rebuild:
+jekyll serve  
