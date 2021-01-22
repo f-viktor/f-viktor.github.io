@@ -57,32 +57,33 @@ Given that “Mac is the only platform that is compatible with everything”, it
 <h1 id="jailbreak">Jailbreak</h1>
 
 <p>Check what sort of jaiblreak you need from this page.<br />
-https://www.theiphonewiki.com/wiki/Jailbreak<br />
-Checkra1n has linux support for sure.<br />
+<a href="https://www.theiphonewiki.com/wiki/Jailbreak">https://www.theiphonewiki.com/wiki/Jailbreak</a><br />
+<a href="https://checkra.in/">Checkra1n</a> has <a href="https://aur.archlinux.org/packages/checkra1n-cli/">Linux support</a> for sure.<br />
 You will need to jailbreak your phone if you plan on testing anything.<br />
-Install cydia too.<br />
+Install cydia too, Checkra1n has a simple button for this.<br />
 Do not wipe the device from the general settings after this, it will break cydia.</p>
 
 <h1 id="installing-tools-on-device">Installing tools on device</h1>
 
 <h3 id="ssh">SSH</h3>
-<p>Install the OpenSSH[https://cydia.saurik.com/package/openssh/] app from cydia.<br />
+<p>Install the <a href="https://cydia.saurik.com/package/openssh/">OpenSSH</a> app from cydia.<br />
 It will instantly start listening on :22<br />
 user: root<br />
-pw  : alpine</p>
+pw: alpine</p>
 
 <h3 id="terminal-emulator">Terminal emulator</h3>
-<p>Install NewTerm 2[https://github.com/hbang/NewTerm/releases] for a term emulator
+<p>Install <a href="https://github.com/hbang/NewTerm/releases">NewTerm 2</a> for a term emulator<br />
 <code class="language-plaintext highlighter-rouge">su root</code> for root access</p>
 
 <h3 id="frida-server">Frida-server</h3>
-<p>Add the frida repository:<br />
-https://build.frida.re<br />
+<p>Add the <a href="https://frida.re/docs/quickstart/">Frida</a> repository:<br />
+<a href="https://build.frida.re">https://build.frida.re</a><br />
 Install the relevant Frida app for your device<br />
 If it doesn’t start automatically you may try to start it from the root folder as <code class="language-plaintext highlighter-rouge">./frida-server</code></p>
 
 <h3 id="installing-burp-certificate">Installing burp certificate</h3>
-<p>https://portswigger.net/support/installing-burp-suites-ca-certificate-in-an-ios-device</p>
+
+<p><a href="https://portswigger.net/support/installing-burp-suites-ca-certificate-in-an-ios-device">PortSwigger’s article</a></p>
 
 <ol>
   <li>Download the certificate and install it</li>
@@ -104,7 +105,7 @@ If it doesn’t start automatically you may try to start it from the root folder
 <p>List processes on the device <code class="language-plaintext highlighter-rouge">frida-ps -U</code></p>
 
 <h3 id="frida-trace">frida-trace</h3>
-<p><code class="language-plaintext highlighter-rouge">frida-trace -U -i "*rtmp*" Appname</code><br />
+<p><code class="language-plaintext highlighter-rouge">frida-trace -U -i "*rtmp*" Appname</code> <br />
 <code class="language-plaintext highlighter-rouge">frida-trace -i "write*" rsyslogd</code></p>
 
 <h3 id="app-locations">app locations</h3>
@@ -112,15 +113,9 @@ If it doesn’t start automatically you may try to start it from the root folder
 <code class="language-plaintext highlighter-rouge">/private/var/mobile/Containers/Data/Application/&lt;budle-id&gt;</code><br />
 you can just <code class="language-plaintext highlighter-rouge">find | grep appname</code></p>
 
-<h3 id="remote-control">Remote control</h3>
-<p>Check out this[] article on how to control your ios device from your linux desktop.</p>
-
-<p>repo: https://zxtouch.net</p>
-
 <h3 id="uxplay">UxPlay</h3>
-<p>Install UxPlay[https://github.com/antimof/UxPlay]<br />
-for screen mirroring<br />
-Check out <a href="https://f-viktor.github.io/articles/scrgto">this article</a> on how to control your ios device from your linux desktop.</p>
+<p>Install <a href="https://github.com/antimof/UxPlay">UxPlay</a> for screen mirroring <br />
+Check out <a href="https://f-viktor.github.io/articles/scrgto">this article</a> on how to control your iOS device from your  Linux desktop.</p>
 
       </section>
     </div>

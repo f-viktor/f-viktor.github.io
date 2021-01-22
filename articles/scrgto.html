@@ -50,20 +50,21 @@
     <div class="container">
       <section id="main_content">
         <h1 id="remote-control-for-ios-devices-from-a-linux-desktop">Remote control for iOS devices from a Linux desktop</h1>
-<p>Aka scrcpy but for iOS and from Linux.<br />
-Since <a href="https://www.urbandictionary.com/define.php?term=Clown%20World">“Apple is the only platform compatible with everything”</a> controlling it from <a href="https://github.com/OverMighty/i-use-arch-btw">linux</a> can be <a href="https://youtu.be/fPNdWnwuBDI?t=10">quite a challenge</a>.
+<p>Aka <a href="https://github.com/Genymobile/scrcpy">scrcpy</a> but for <a href="https://i.imgur.com/0yTw52P.jpg">iOS</a> and from Linux.</p>
+
+<p>Since <a href="https://www.urbandictionary.com/define.php?term=Clown%20World">“Apple is the only platform compatible with everything”</a> controlling it from <a href="https://github.com/OverMighty/i-use-arch-btw">linux</a> can be <a href="https://youtu.be/fPNdWnwuBDI?t=10">quite a challenge</a>.
 Thanks to some <a href="https://ell.stackexchange.com/questions/30805/is-it-correct-to-say-a-program-is-buggy">new</a> projects, it is now possible. By combining <a href="https://pypi.org/project/python-libxdo/">xdotool</a>, <a href="https://github.com/antimof/UxPlay">UxPlay</a> and <a href="https://github.com/xuan32546/IOS13-SimulateTouch">zxtouch</a> you can view and control your <a href="https://stallman.org/saintignucius.jpg">Jailbroken</a> <a href="https://en.wikipedia.org/wiki/Scam_(disambiguation)">iOS device</a> from a Linux desktop over the <a href="https://en.wikipedia.org/wiki/Series_of_tubes">network</a>.</p>
 
 <h2 id="zxtouch">zxtouch</h2>
 <p>This is responsible for simulating <a href="https://www.youtube.com/watch?v=cUqCv_1kGzM">touch</a> events on the device based on network calls.
 You can install this from cydia by adding the repo:<br />
-repo: https://zxtouch.net<br />
+<a href="https://zxtouch.net">https://zxtouch.net</a><br />
 And then installing the zxtouch <a href="https://news.artnet.com/app/news-upload/2015/10/south-park-yaoi-4.jpg">app</a><br />
-It will start listening on :6000 after installation.</p>
+It will start listening on port :6000 after installation.</p>
 
 <h2 id="uxplay">UxPlay</h2>
 <p>This allows you to see your <a href="https://www.theonion.com/report-90-of-waking-hours-spent-staring-at-glowing-re-1819570829">device’s screen</a> on your linux desktop via apple’s screen mirroring.
-Install UxPlay[https://github.com/antimof/UxPlay] on your desktop.
+Install <a href="https://github.com/antimof/UxPlay">UxPlay</a> on your desktop.
 Try running it, it will throw some avahi warnings, <a href="https://youtu.be/DstWZY_eUOc?t=74">just ignore that</a>.
 Your phone will likely not see it right away or will not be able to connect to it.
 When this happens run:</p>
