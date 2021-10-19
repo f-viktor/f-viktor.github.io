@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="{{ site.lang | default: "en-US" }}">
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: site.github.build_revision | relative_url }}">
+
+{% seo %}
+<script>
+	var items = Array("Tell me about Bane, why does he wear the mask?",
+			  "Nobody ever made profit by \"hacking for fun and profit\"",
+        "HACK THE PLANEEEEEEEET!444!!!!!",
+			  "It's like that show Becker",
+			  "The Kali-er you become, the more your VM will crash",
+			  "I use Arch btw",
+			  "God is dead. God wemains dead. And we have kiwwed him.",
+			  "I like elephants and God likes elephants",
+			  "I will stop the motor of the world",
+        "Reject modernity, return to CLI");
+	var item = items[Math.floor(Math.random() * items.length)];
+</script>
+
+  </head>
+
+  <body onload="document.getElementById('deep').innerHTML = item;">
+
+    <header>
+      <div class="container">
+        <a id="a-title" href="{{ '/' | relative_url }}">
+          <h1>{{ site.title | default: site.github.repository_name }}</h1>
+        </a>
+
+
+	<h2> <div id="deep"> </div> </h2>
+      </div>
+    </header>
+    <div class="container">
+      <section id="main_content">
+        {{ content }}
+      </section>
+    </div>
+
+  </body>
+</html>

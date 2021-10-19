@@ -1,0 +1,581 @@
+---
+layout: default
+---
+
+# Disclaimer
+
+All of the issues discussed in this post were responsibly disclosed to the [Meetecho](https://www.meetecho.com/en/) team who were really awesome and fixed them in a matter of days. Shout-out to those guys!
+
+# Introduction
+
+If you ever saw a CVE entry with the description "multiple DoS in xyz" and wondered "what the #?!% does that even mean?" this post will hopefully answer that. It's worth noting that nowadays such CVEs no longer get created, but instead they are separated into individual tickets if possible. Anyway, this is the story all about:
+
+
+*   [CVE-2020-10573](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-10573) Janus-Gateway Double mutex unlock attempt (DoS)  
+*   [CVE-2020-10574](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-10574) Janus-Gateway [Null pointer dereference](https://www.youtube.com/watch?v=bLHL75H_VEM) in admin-API (authenticated DoS)  
+*   [CVE-2020-10575](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-10575) Janus-Gateway Race condition in videocall session->username (UAF/DoS)  
+*   [CVE-2020-10576](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-10576) Janus-Gateway Race condition in voicemail session->source (UAF/DoS)
+*   [CVE-2020-10577](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-10577) Janus-Gateway Race Condition in videocall session->source (UAF/DoS)  
+
+# The short answer
+
+So how these tickets get created is fuzzing, lots and lots of fuzzing. You set up a fuzzer, and wait for it to crash the application. You can read more about this process [here](/articles/libprotobuf). Then you just wait, and after a while...
+
+# CVE-2020-10573 Double mutex unlock
+
+```
+Attempt to unlock mutex that was not locked
+==170860== ERROR: libFuzzer: deadly signal
+#0 0x55c73273cacb in __sanitizer_print_stack_trace (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x38aacb)
+#1 0x55c732690099 in fuzzer::PrintStackTrace() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2de099)
+#2 0x55c73266ea99 in fuzzer::Fuzzer::CrashCallback() (.part.0) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bca99)
+#3 0x55c73266eb59 in fuzzer::Fuzzer::StaticCrashSignalCallback() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bcb59)
+#4 0x7fcb2011f7ff (/usr/lib/libpthread.so.0+0x147ff)
+#5 0x7fcb1ff5bce4 in raise (/usr/lib/libc.so.6+0x3bce4)
+#6 0x7fcb1ff45856 in abort (/usr/lib/libc.so.6+0x25856)
+#7 0x7fcb208cd4be (/usr/lib/libglib-2.0.so.0+0x1c4be)
+#8 0x7fcb131e00cd in janus_audiobridge_process_synchronous_request /home/fuzzmachine/git/janus/janus-trace/plugins/janus_audiobridge.c:2289:5
+#9 0x7fcb131b8a1f in janus_audiobridge_handle_message /home/fuzzmachine/git/janus/janus-trace/plugins/janus_audiobridge.c:3039:13
+#10 0x55c7328767e3 in janus_process_incoming_request /home/fuzzmachine/git/janus/janus-trace/janus.c:1466:33
+#11 0x55c73276f73f in send_request(json_t*) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:376:2
+#12 0x55c732770018 in fuzzer(Signal const&) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:429:4
+#13 0x55c7327708e6 in LLVMFuzzerTestOneInput /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:435:1
+#14 0x55c73266f46e in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bd46e)
+#15 0x55c732671690 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool*) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bf690)
+#16 0x55c732672029 in fuzzer::Fuzzer::MutateAndTestOne() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2c0029)
+#17 0x55c7326743f7 in fuzzer::Fuzzer::Loop(std::vector<fuzzer::SizedFile, fuzzer::fuzzer_allocator<fuzzer::SizedFile> >&) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2c23f7)
+#18 0x55c73265de78 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2abe78)
+#19 0x55c73264af43 in main (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x298f43)
+#20 0x7fcb1ff47022 in __libc_start_main (/usr/lib/libc.so.6+0x27022)
+#21 0x55c73264b60d in _start (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x29960d)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+MS: 1 CustomCrossOver-; base unit: a55572846aea027151a784d64e8db8fc0c2d4880
+0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x43,0x52,0x45,0x41,0x54,0x45,0xa,0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x49,0x4e,0x46,0x4f,0xa,0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x49,0x4e,0x46,0x4f,0xa,0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x49,0x4e,0x46,0x4f,0xa,0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x41,0x54,0x54,0x41,0x43,0x48,0xa,0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x4d,0x5f,0x4c,0x49,0x53,0x54,0xa,0x6a,0x61,0x6e,0x75,0x73,0x3a,0x20,0x4d,0x5f,0x4c,0x49,0x53,0x54,0xa,0x70,0x6c,0x75,0x67,0x69,0x6e,0x3a,0x20,0x41,0x55,0x44,0x49,0x4f,0x42,0x52,0x49,0x44,0x47,0x45,0xa,
+janus: CREATE\x0ajanus: INFO\x0ajanus: INFO\x0ajanus: INFO\x0ajanus: ATTACH\x0ajanus: M_LIST\x0ajanus: M_LIST\x0aplugin: AUDIOBRIDGE\x0a
+```
+So your application crashed and now you want to find out why, so you can make an exploit.
+
+![every room is private](/img/multipledos/573_a.png)  
+
+For some reason, while listing rooms, the audiobridge plugin is making the assumption that private rooms are also locked, while they aren't necessarily locked at all.  
+Upon attempting to unlock an already unlocked mutex, the server will crash.
+
+![crashing this server, with no survivors](/img/multipledos/573_b.png)  
+
+To do this, you need to send 4 requests which I will not post here, for hopefully obvious reasons. The jist of it is:
+
+1. Create a session
+2. Attach to the AudioBridge plugin, with your session
+3. Create a private room with your session and handle
+4. list rooms
+
+The server will crash before you receive an answer to the last request.
+
+# Intermission 1
+
+So this is all fine and dandy, but you can't really corrupt memory with a crash like this, as it is more of an unhandled exception. So all this will ever be is a DoS. I basically just patched out the unlock here and continued on fuzzing when suddenly, a wild crash appeared!
+
+# CVE-2020-10574 Null pointer dereference
+
+![OwO What's this?](/img/multipledos/574_a.png)
+
+In the admin API of Janus's query_logger request, the server fails to properly validate if all required parameters are present.
+
+![code](/img/multipledos/574_b.png)  
+
+It clearly wants to have a "logger" paramter but then forgets to check if it actually exists, due to what is pretty obviously a copypaste mistake.
+
+![copypaste](/img/multipledos/574_c.png)
+
+So if you forget to put a logger paramter into your request, `json_t *logger` will be null (line 2129) and then it gets into `g_hash_table_lookup(logger, logger_value)` which will make it into a null pointer dereference.
+
+# Intermission 2
+
+So neat... but that still does not corrupt memory, it just crashes the application. So at this point we have two ways to crash this server, but we still don't even have a read or write primitive.
+
+# CVE-2020-10575  Race condition in Videocall plugin 1
+
+```
+=================================================================
+==113679==ERROR: AddressSanitizer: heap-use-after-free on address 0x603000bcd3a0 at pc 0x5624e9399bfb bp 0x7f0445252600 sp 0x7f0445251db0
+READ of size 2 at 0x603000bcd3a0 thread T9
+#0 0x5624e9399bfa in __interceptor_strlen.part.0 (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x324bfa)
+#1 0x7f0450f9682e in json_string (/usr/lib/libjansson.so.4+0x882e)
+#2 0x7f0445a776e4 in janus_videocall_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_videocall.c:1039:7
+#3 0x7f0450bc4b80 (/usr/lib/libglib-2.0.so.0+0x48b80)
+#4 0x7f04503df46e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#5 0x7f04502ea3d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+0x603000bcd3a0 is located 0 bytes inside of 19-byte region [0x603000bcd3a0,0x603000bcd3b3)
+freed by thread T9 here:
+#0 0x5624e93ee4f9 in free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x3794f9)
+#1 0x7f0445a722da in janus_videocall_session_free /home/fuzzmachine/git/janus/janus-trace/plugins/janus_videocall.c:403:2
+
+previously allocated by thread T9 here:
+#0 0x5624e93ee829 in malloc (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x379829)
+#1 0x7f0450be0a59 in g_malloc (/usr/lib/libglib-2.0.so.0+0x64a59)
+
+Thread T9 created by T0 here:
+#0 0x5624e936b5b4 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2f65b4)
+#1 0x7f0450bc7bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+SUMMARY: AddressSanitizer: heap-use-after-free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x324bfa) in __interceptor_strlen.part.0
+Shadow bytes around the buggy address:
+0x0c0680171a20: 00 00 03 fa fa fa fd fd fd fd fa fa 00 00 00 00
+0x0c0680171a30: fa fa 00 00 03 fa fa fa 00 00 00 00 fa fa 00 00
+0x0c0680171a40: 04 fa fa fa 00 00 00 00 fa fa fd fd fd fa fa fa
+0x0c0680171a50: fd fd fd fa fa fa fd fd fd fa fa fa fd fd fd fd
+0x0c0680171a60: fa fa fd fd fd fd fa fa fd fd fd fd fa fa fd fd
+=>0x0c0680171a70: fd fa fa fa[fd]fd fd fa fa fa fd fd fd fd fa fa
+0x0c0680171a80: fd fd fd fd fa fa fd fd fd fd fa fa fd fd fd fa
+0x0c0680171a90: fa fa fd fd fd fd fa fa fd fd fd fa fa fa fd fd
+0x0c0680171aa0: fd fd fa fa fd fd fd fa fa fa fd fd fd fd fa fa
+0x0c0680171ab0: fd fd fd fd fa fa fd fd fd fa fa fa fd fd fd fd
+0x0c0680171ac0: fa fa fd fd fd fd fa fa fd fd fd fa fa fa fd fd
+Shadow byte legend (one shadow byte represents 8 application bytes):
+Addressable: 00
+Partially addressable: 01 02 03 04 05 06 07
+Heap left redzone: fa
+Freed heap region: fd
+Stack left redzone: f1
+Stack mid redzone: f2
+Stack right redzone: f3
+Stack after return: f5
+Stack use after scope: f8
+Global redzone: f9
+Global init order: f6
+Poisoned by user: f7
+Container overflow: fc
+Array cookie: ac
+Intra object redzone: bb
+ASan internal: fe
+Left alloca redzone: ca
+Right alloca redzone: cb
+Shadow gap: cc
+==113679==ABORTING
+MS: 0 ; base unit: 0000000000000000000000000000000000000000
+artifact_prefix='./'; Test unit written to ./crash-248acfbf7dc41f526708ee212e70842a52da62cf
+```
+
+but also
+
+```
+=================================================================
+==327115==ERROR: AddressSanitizer: heap-use-after-free on address 0x6030008cfb30 at pc 0x564b07196f46 bp 0x7fad060395b0 sp 0x7fad06038d60
+READ of size 1 at 0x6030008cfb30 thread T7
+#0 0x564b07196f45 in __interceptor_strcmp.part.0 (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x353f45)
+#1 0x7fad109a5f89 in g_str_equal (/usr/lib/libglib-2.0.so.0+0x77f89)
+#2 0x7fad109aa9fb in g_hash_table_lookup (/usr/lib/libglib-2.0.so.0+0x7c9fb)
+#3 0x7fad0685e012 in janus_videocall_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_videocall.c:1064:7
+#4 0x7fad10976b80 (/usr/lib/libglib-2.0.so.0+0x48b80)
+#5 0x7fad1019146e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#6 0x7fad1009c3d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+0x6030008cfb30 is located 0 bytes inside of 19-byte region [0x6030008cfb30,0x6030008cfb43)
+freed by thread T7 here:
+#0 0x564b071bc4f9 in free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x3794f9)
+#1 0x7fad068592aa in janus_videocall_session_free /home/fuzzmachine/git/janus/janus-trace/plugins/janus_videocall.c:405:2
+
+previously allocated by thread T7 here:
+#0 0x564b071bc829 in malloc (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x379829)
+#1 0x7fad10992a59 in g_malloc (/usr/lib/libglib-2.0.so.0+0x64a59)
+
+Thread T7 created by T0 here:
+#0 0x564b071395b4 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2f65b4)
+#1 0x7fad10979bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+SUMMARY: AddressSanitizer: heap-use-after-free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x353f45) in __interceptor_strcmp.part.0
+Shadow bytes around the buggy address:
+0x0c0680111f10: fa fa fd fd fd fd fa fa fd fd fd fd fa fa fd fd
+0x0c0680111f20: fd fd fa fa fd fd fd fd fa fa fd fd fd fa fa fa
+0x0c0680111f30: fd fd fd fa fa fa fd fd fd fd fa fa fd fd fd fd
+0x0c0680111f40: fa fa fd fd fd fa fa fa fd fd fd fd fa fa fd fd
+0x0c0680111f50: fd fd fa fa fd fd fd fa fa fa fd fd fd fa fa fa
+=>0x0c0680111f60: fd fd fd fd fa fa[fd]fd fd fa fa fa fd fd fd fd
+0x0c0680111f70: fa fa fd fd fd fd fa fa fd fd fd fd fa fa fd fd
+0x0c0680111f80: fd fd fa fa fd fd fd fa fa fa fd fd fd fd fa fa
+0x0c0680111f90: fd fd fd fd fa fa fd fd fd fd fa fa fd fd fd fd
+0x0c0680111fa0: fa fa fd fd fd fd fa fa fd fd fd fd fa fa fd fd
+0x0c0680111fb0: fd fd fa fa fd fd fd fa fa fa fd fd fd fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+Addressable: 00
+Partially addressable: 01 02 03 04 05 06 07
+Heap left redzone: fa
+Freed heap region: fd
+Stack left redzone: f1
+Stack mid redzone: f2
+Stack right redzone: f3
+Stack after return: f5
+Stack use after scope: f8
+Global redzone: f9
+Global init order: f6
+Poisoned by user: f7
+Container overflow: fc
+Array cookie: ac
+Intra object redzone: bb
+ASan internal: fe
+Left alloca redzone: ca
+Right alloca redzone: cb
+Shadow gap: cc
+==327115==ABORTING
+MS: 0 ; base unit: 0000000000000000000000000000000000000000
+artifact_prefix='./signaling_fuzzer-'; Test unit written to ./signaling_fuzzer-crash-47d10de98a3fedd7cdc194c3fd03b78e0797dc3d
+```
+Both the "list" and the "register" requests have the potential to access user->username after it has been freed on another thread. So this is a Use After Free!
+
+![uaf](/img/multipledos/575_a.png)
+
+The free is called when references to the user sink to 0, unfortunately the trace can't tell us where that was done. Through elimination it appears that the bug doesn't happen if one of the following messages is removed:
+
+*    create -> necessary so that the other functions work
+*    attach -> needed to reach videocall plugin
+*    detach -> potentially responsible for freeing the session (has janus_decref)
+*    register -> responsible for setting the username
+
+additionally, the list version of the crash obviously only happens if the list (lists registered usernames) request is added. List is a long running function (depending on the number of usernames) during which freeing can occur.
+
+So what really happens? Simple!
+
+![elémentary my dear watson](/img/multipledos/575_b.png)
+
+Suffice to say, this took a lot longer to analyze. I tried a number of approaches to get it to work consistently. The username is controlled by the client, therefore we have a pretty good write to the heap, we could fill the heap with something and do some magic. Unfortunately the fact that this is a race condition makes debugging it extremely tedious and I decided to put it aside in the end.
+
+# Intermission 3
+
+So finally we have something that accesses invalid memory, which is neat, however it's so complicated to reproduce that making a consistent exploit out of it seems nearly impossible.
+
+# CVE-2020-10577  Race condition in Videocall plugin 2
+```
+==402962==ERROR: AddressSanitizer: heap-use-after-free on address 0x60400000aa50 at pc 0x55a7f5cf5c33 bp 0x7f5264a6bcd0 sp 0x7f5264a6bcc8
+READ of size 8 at 0x60400000aa50 thread T9
+#11413 REDUCE cov: 452 ft: 1939 corp: 187/48Kb lim: 6156 exec/s: 407 rss: 670Mb L: 143/1362 MS: 1 CustomCrossOver-
+#0 0x55a7f5cf5c32 in janus_session_notify_event /home/fuzzmachine/git/janus/janus-signaling/janus.c:678:110
+#1 0x55a7f5d1ea6c in janus_plugin_push_event /home/fuzzmachine/git/janus/janus-signaling/janus.c:3225:2
+#2 0x7f526528fcb7 in janus_videocall_handler /home/fuzzmachine/git/janus/janus-vanilla/plugins/janus_videocall.c:1662:14
+#3 0x7f5270229bb0 (/usr/lib/libglib-2.0.so.0+0x48bb0)
+#4 0x7f526fa4446e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#5 0x7f526f94f3d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+0x60400000aa50 is located 0 bytes inside of 40-byte region [0x60400000aa50,0x60400000aa78)
+freed by thread T0 here:
+#0 0x55a7f5c034f9 in free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2824f9)
+#1 0x55a7f5cf8b6e in janus_request_destroy /home/fuzzmachine/git/janus/janus-signaling/janus.c:791:2
+#2 0x55a7f5cfc117 in janus_process_incoming_request /home/fuzzmachine/git/janus/janus-signaling/janus.c:1157:4
+#3 0x55a7f5c3ef14 in send_request(json_t*, janus_transport_session*) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:370:2
+#4 0x55a7f5c3f274 in fuzzer(Signal const&) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:416:2
+#5 0x55a7f5c3fcdb in LLVMFuzzerTestOneInput /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:423:1
+#6 0x55a7f5b3ffbe in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1befbe)
+#7 0x55a7f5b421e0 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool*) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1c11e0)
+#8 0x55a7f5b42b79 in fuzzer::Fuzzer::MutateAndTestOne() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1c1b79)
+#9 0x55a7f5b44f47 in fuzzer::Fuzzer::Loop(std::vector<fuzzer::SizedFile, fuzzer::fuzzer_allocator<fuzzer::SizedFile> >&) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1c3f47)
+#10 0x55a7f5b2e9c8 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1ad9c8)
+#11 0x55a7f5b1bf03 in main (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x19af03)
+#12 0x7f526f877022 in __libc_start_main (/usr/lib/libc.so.6+0x27022)
+
+previously allocated by thread T0 here:
+#0 0x55a7f5c03829 in malloc (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x282829)
+#1 0x7f52702458d9 in g_malloc (/usr/lib/libglib-2.0.so.0+0x648d9)
+#2 0x55a7f5cfc74a in janus_process_incoming_request /home/fuzzmachine/git/janus/janus-signaling/janus.c:967:21
+#3 0x55a7f5c3ef14 in send_request(json_t*, janus_transport_session*) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:370:2
+#4 0x55a7f5c3f274 in fuzzer(Signal const&) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:416:2
+#5 0x55a7f5c3fcdb in LLVMFuzzerTestOneInput /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:423:1
+#6 0x55a7f5b3ffbe in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1befbe)
+#7 0x55a7f5b421e0 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool*) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1c11e0)
+#8 0x55a7f5b42b79 in fuzzer::Fuzzer::MutateAndTestOne() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1c1b79)
+#9 0x55a7f5b44f47 in fuzzer::Fuzzer::Loop(std::vector<fuzzer::SizedFile, fuzzer::fuzzer_allocator<fuzzer::SizedFile> >&) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1c3f47)
+#10 0x55a7f5b2e9c8 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1ad9c8)
+#11 0x55a7f5b1bf03 in main (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x19af03)
+#12 0x7f526f877022 in __libc_start_main (/usr/lib/libc.so.6+0x27022)
+
+Thread T9 created by T0 here:
+#0 0x55a7f5b805b4 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x1ff5b4)
+#1 0x7f527022cc1a (/usr/lib/libglib-2.0.so.0+0x4bc1a)
+
+SUMMARY: AddressSanitizer: heap-use-after-free /home/fuzzmachine/git/janus/janus-signaling/janus.c:678:110 in janus_session_notify_event
+Shadow bytes around the buggy address:
+0x0c087fff94f0: fa fa fd fd fd fd fd fa fa fa 00 00 00 00 00 fa
+0x0c087fff9500: fa fa 00 00 00 00 00 fa fa fa fd fd fd fd fd fa
+0x0c087fff9510: fa fa 00 00 00 00 00 fa fa fa 00 00 00 00 00 fa
+0x0c087fff9520: fa fa fd fd fd fd fd fa fa fa fd fd fd fd fd fa
+0x0c087fff9530: fa fa fd fd fd fd fd fa fa fa fd fd fd fd fd fa
+=>0x0c087fff9540: fa fa fd fd fd fd fd fa fa fa[fd]fd fd fd fd fa
+0x0c087fff9550: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 fa
+0x0c087fff9560: fa fa 00 00 00 00 00 00 fa fa fd fd fd fd fd fa
+0x0c087fff9570: fa fa fd fd fd fd fd fa fa fa fd fd fd fd fd fa
+0x0c087fff9580: fa fa fd fd fd fd fd fa fa fa fd fd fd fd fd fa
+0x0c087fff9590: fa fa 00 00 00 00 00 fa fa fa fd fd fd fd fd fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+Addressable: 00
+Partially addressable: 01 02 03 04 05 06 07
+Heap left redzone: fa
+Freed heap region: fd
+Stack left redzone: f1
+Stack mid redzone: f2
+Stack right redzone: f3
+Stack after return: f5
+Stack use after scope: f8
+Global redzone: f9
+Global init order: f6
+Poisoned by user: f7
+Container overflow: fc
+Array cookie: ac
+Intra object redzone: bb
+ASan internal: fe
+Left alloca redzone: ca
+Right alloca redzone: cb
+Shadow gap: cc
+==402962==ABORTING
+MS: 9 InsertByte-Custom-InsertRepeatedBytes-Custom-InsertByte-Custom-ShuffleBytes-ChangeByte-Custom-; base unit: e14c4ee4907e1c352f9d3c46fa9b34696423a67c
+artifact_prefix='./'; Test unit written to ./crash-6fc4b842aed37586b95308decdd725f20f5946c3
+```
+session->source contains information about the transport protocol used to get the request, and it's purpose is to tell the janus.c which transport plugin to use when answering (HTTP, WSS, etc).
+
+![source](/img/multipledos/577_a.png)
+
+The problem is that `janus_request_destroy` may decide to destroy your request(session->source) halfway through `janus_session_notify_event`
+
+![notify_me_senpai](/img/multipledos/576_c.png)
+
+So we are trying to check if the session is destroyed yet, and it isnt, but then it is, and then we are chekcing if session->transport is destroyed, but at this point session no longer exists. Cool and all, but we are basically in an IF statement checking if \<random heap address\> != NULL. That's great, however getting both the race condition to occur, and controlling the heap address at the same time proved a bit too difficult for now.
+
+# Intermission 4
+
+So at this point we are corrupting memory and reading from weird places but it is still very awkward to do anything with this. I'm sure there are people on this earth who could make a shell out of a dirty sock and a dull paperclip, but unfortunately that's out of my skill level, so I moved on.
+
+# CVE-2020-10576  Race condition in Voicemail plugin
+
+```
+==910312==ERROR: AddressSanitizer: heap-use-after-free on address 0x60400045a7a0 at pc 0x55bcf4719dd2 bp 0x7f9231e86d50 sp 0x7f9231e86d48
+READ of size 4 at 0x60400045a7a0 thread T6
+#0 0x55bcf4719dd1 in janus_plugin_session_is_alive /home/fuzzmachine/git/janus/janus-trace/ice.c:574:4
+#1 0x55bcf4804e4d in janus_plugin_end_session /home/fuzzmachine/git/janus/janus-trace/janus.c:3641:6
+#2 0x7f9231eadf26 in janus_voicemail_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:835:4
+#3 0x7f923c2d4b80 (/usr/lib/libglib-2.0.so.0+0x48b80)
+#4 0x7f923baef46e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#5 0x7f923b9fa3d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+0x60400045a7a0 is located 16 bytes inside of 40-byte region [0x60400045a790,0x60400045a7b8)
+freed by thread T416 (hloop 404) here:
+#0 0x55bcf46879a9 in free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x37e9a9)
+#1 0x55bcf472e472 in janus_ice_plugin_session_free /home/fuzzmachine/git/janus/janus-trace/ice.c:1325:2
+#2 0x7f9231eb0ecb in janus_voicemail_session_free /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:225:2
+#3 0x7f9231ea20a2 in janus_voicemail_session_destroy /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:219:3
+#4 0x7f923c30ad2b (/usr/lib/libglib-2.0.so.0+0x7ed2b)
+
+previously allocated by thread T0 here:
+#0 0x55bcf4687cd9 in malloc (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x37ecd9)
+#1 0x7f923c2f0a59 in g_malloc (/usr/lib/libglib-2.0.so.0+0x64a59)
+#2 0x55bcf47c1092 in janus_process_incoming_request /home/fuzzmachine/git/janus/janus-trace/janus.c:1084:15
+#3 0x55bcf46c473f in send_request(json_t*) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:376:2
+#4 0x55bcf46c5018 in fuzzer(Signal const&) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:420:4
+#5 0x55bcf46c57dc in LLVMFuzzerTestOneInput /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:426:1
+#6 0x55bcf45c446e in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bb46e)
+#7 0x55bcf45c6690 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool*) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bd690)
+#8 0x55bcf45c7029 in fuzzer::Fuzzer::MutateAndTestOne() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2be029)
+#9 0x55bcf45c93f7 in fuzzer::Fuzzer::Loop(std::vector<fuzzer::SizedFile, fuzzer::fuzzer_allocator<fuzzer::SizedFile> >&) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2c03f7)
+#10 0x55bcf45b2e78 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2a9e78)
+#11 0x55bcf459ff43 in main (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x296f43)
+#12 0x7f923b922022 in __libc_start_main (/usr/lib/libc.so.6+0x27022)
+
+Thread T6 created by T0 here:
+#0 0x55bcf4604a64 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2fba64)
+#1 0x7f923c2d7bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+Thread T416 (hloop 404) created by T0 here:
+#0 0x55bcf4604a64 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2fba64)
+#1 0x7f923c2d7bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+SUMMARY: AddressSanitizer: heap-use-after-free /home/fuzzmachine/git/janus/janus-trace/ice.c:574:4 in janus_plugin_session_is_alive
+Shadow bytes around the buggy address:
+0x0c08800834a0: fa fa fd fd fd fd fd fa fa fa fd fd fd fd fd fa
+0x0c08800834b0: fa fa 00 00 00 00 00 00 fa fa fd fd fd fd fd fa
+0x0c08800834c0: fa fa fd fd fd fd fd fa fa fa fd fd fd fd fd fa
+0x0c08800834d0: fa fa fd fd fd fd fd fd fa fa 00 00 00 00 00 00
+0x0c08800834e0: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 fa
+=>0x0c08800834f0: fa fa fd fd[fd]fd fd fa fa fa fd fd fd fd fd fa
+0x0c0880083500: fa fa fd fd fd fd fd fd fa fa fd fd fd fd fd fd
+0x0c0880083510: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 fa
+0x0c0880083520: fa fa 00 00 00 00 00 fa fa fa fd fd fd fd fd fa
+0x0c0880083530: fa fa 00 00 00 00 00 fa fa fa fd fd fd fd fd fd
+0x0c0880083540: fa fa 00 00 00 00 00 fa fa fa fd fd fd fd fd fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+Addressable: 00
+Partially addressable: 01 02 03 04 05 06 07
+Heap left redzone: fa
+Freed heap region: fd
+Stack left redzone: f1
+Stack mid redzone: f2
+Stack right redzone: f3
+Stack after return: f5
+Stack use after scope: f8
+Global redzone: f9
+Global init order: f6
+Poisoned by user: f7
+Container overflow: fc
+Array cookie: ac
+Intra object redzone: bb
+ASan internal: fe
+Left alloca redzone: ca
+Right alloca redzone: cb
+Shadow gap: cc
+==910312==ABORTING
+MS: 1 CustomCrossOver-; base unit: 912fb41c9fad4c60e51a5b7a699768473d3bc709
+artifact_prefix='./signaling_fuzzer-'; Test unit written to ./signaling_fuzzer-crash-d91f2b671489b9a4efaccdaa469dfe45a16e2860
+```
+or
+```
+=================================================================
+==930472==ERROR: AddressSanitizer: heap-use-after-free on address 0x60b000e686d8 at pc 0x7f752cd87d8c bp 0x7f752cd60fd0 sp 0x7f752cd60fc8
+READ of size 4 at 0x60b000e686d8 thread T6
+#0 0x7f752cd87d8b in janus_voicemail_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:834:15
+#1 0x7f7537406b80 (/usr/lib/libglib-2.0.so.0+0x48b80)
+#2 0x7f7536c2146e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#3 0x7f7536b2c3d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+0x60b000e686d8 is located 72 bytes inside of 104-byte region [0x60b000e68690,0x60b000e686f8)
+freed by thread T890 (hloop 878) here:
+#0 0x5637034099a9 in free (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x37e9a9)
+#1 0x7f752cd8b6ae in janus_voicemail_session_free /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:227:2
+#2 0x7f752cd7c0a2 in janus_voicemail_session_destroy /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:219:3
+#3 0x7f753743cd2b (/usr/lib/libglib-2.0.so.0+0x7ed2b)
+
+previously allocated by thread T0 here:
+#0 0x563703409e91 in calloc (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x37ee91)
+#1 0x7f7537422941 in g_malloc0 (/usr/lib/libglib-2.0.so.0+0x64941)
+#2 0x5637034ad0ba in janus_ice_handle_attach_plugin /home/fuzzmachine/git/janus/janus-trace/ice.c:1175:2
+#3 0x5637035430a2 in janus_process_incoming_request /home/fuzzmachine/git/janus/janus-trace/janus.c:1084:15
+#4 0x56370344673f in send_request(json_t*) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:376:2
+#5 0x563703447018 in fuzzer(Signal const&) /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:420:4
+#6 0x5637034477dc in LLVMFuzzerTestOneInput /home/fuzzmachine/git/janus/janus-trace/fuzzers/signaling_fuzzer.cc:426:1
+#7 0x56370334646e in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bb46e)
+#8 0x563703348690 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool*) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2bd690)
+#9 0x563703349029 in fuzzer::Fuzzer::MutateAndTestOne() (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2be029)
+#10 0x56370334b3f7 in fuzzer::Fuzzer::Loop(std::vector<fuzzer::SizedFile, fuzzer::fuzzer_allocator<fuzzer::SizedFile> >&) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2c03f7)
+#11 0x563703334e78 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long)) (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2a9e78)
+#12 0x563703321f43 in main (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x296f43)
+#13 0x7f7536a54022 in __libc_start_main (/usr/lib/libc.so.6+0x27022)
+
+Thread T6 created by T0 here:
+#0 0x563703386a64 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2fba64)
+#1 0x7f7537409bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+Thread T890 (hloop 878) created by T0 here:
+#0 0x563703386a64 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2fba64)
+#1 0x7f7537409bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+SUMMARY: AddressSanitizer: heap-use-after-free /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:834:15 in janus_voicemail_handler
+Shadow bytes around the buggy address:
+0x0c16801c5080: fd fd fd fd fd fd fd fd fa fa fa fa fa fa fa fa
+0x0c16801c5090: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fa fa
+0x0c16801c50a0: fa fa fa fa fa fa fd fd fd fd fd fd fd fd fd fd
+0x0c16801c50b0: fd fd fd fa fa fa fa fa fa fa fa fa fd fd fd fd
+0x0c16801c50c0: fd fd fd fd fd fd fd fd fd fa fa fa fa fa fa fa
+=>0x0c16801c50d0: fa fa fd fd fd fd fd fd fd fd fd[fd]fd fd fd fa
+0x0c16801c50e0: fa fa fa fa fa fa fa fa fd fd fd fd fd fd fd fd
+0x0c16801c50f0: fd fd fd fd fd fa fa fa fa fa fa fa fa fa fd fd
+0x0c16801c5100: fd fd fd fd fd fd fd fd fd fd fd fd fa fa fa fa
+0x0c16801c5110: fa fa fa fa fd fd fd fd fd fd fd fd fd fd fd fd
+0x0c16801c5120: fd fd fa fa fa fa fa fa fa fa 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+Addressable: 00
+Partially addressable: 01 02 03 04 05 06 07
+Heap left redzone: fa
+Freed heap region: fd
+Stack left redzone: f1
+Stack mid redzone: f2
+Stack right redzone: f3
+Stack after return: f5
+Stack use after scope: f8
+Global redzone: f9
+Global init order: f6
+Poisoned by user: f7
+Container overflow: fc
+Array cookie: ac
+Intra object redzone: bb
+ASan internal: fe
+Left alloca redzone: ca
+Right alloca redzone: cb
+```
+or
+```
+plugins/janus_voicemail.c:235:3: runtime error: member access within null pointer of type 'janus_voicemail_session' (aka 'struct janus_voicemail_session')
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior plugins/janus_voicemail.c:235:3 in
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==904520==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000058 (pc 0x7fdc10ac09e5 bp 0x7fdc10aa4fd0 sp 0x7fdc10aa4e30 T6)
+==904520==The signal is caused by a WRITE memory access.
+==904520==Hint: address points to the zero page.
+#0 0x7fdc10ac09e4 in janus_voicemail_message_free /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c
+#1 0x7fdc10acc66d in janus_voicemail_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:850:4
+#2 0x7fdc1aef5b80 (/usr/lib/libglib-2.0.so.0+0x48b80)
+#3 0x7fdc1a71046e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#4 0x7fdc1a61b3d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c in janus_voicemail_message_free
+Thread T6 created by T0 here:
+#0 0x55fbc405ba64 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2fba64)
+#1 0x7fdc1aef8bea (/usr/lib/libglib-2.0.so.0+0x4bbea)
+
+==904520==ABORTING
+MS: 2 CustomCrossOver-CustomCrossOver-; base unit: f8e6f7cea8d6274d559b337d6474ffb065539c99
+
+
+artifact_prefix='./'; Test unit written to ./crash-da39a3ee5e6b4b0d3255bfef95601890afd80709
+```
+or
+```
+ice.c:574:4: runtime error: member access within misaligned address 0x604054000084 for type 'janus_plugin_session' (aka 'struct janus_plugin_session'), which requires 8 byte alignment
+0x604054000084: note: pointer points here
+<memory cannot be printed>
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior ice.c:574:4 in
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==228959==ERROR: AddressSanitizer: SEGV on unknown address 0x604054000094 (pc 0x5574cb642a63 bp 0x7f9c7e0c2f90 sp 0x7f9c7e0c2d60 T6)
+==228959==The signal is caused by a READ memory access.
+#0 0x5574cb642a62 in janus_plugin_session_is_alive /home/fuzzmachine/git/janus/janus-trace/ice.c:574:4
+#1 0x5574cb72debd in janus_plugin_end_session /home/fuzzmachine/git/janus/janus-trace/janus.c:3641:6
+#2 0x7f9c824521cf in janus_voicemail_handler /home/fuzzmachine/git/janus/janus-trace/plugins/janus_voicemail.c:838:4
+#3 0x7f9c88be7e70 (/usr/lib/libglib-2.0.so.0+0x44e70)
+#4 0x7f9c8840646e in start_thread (/usr/lib/libpthread.so.0+0x946e)
+#5 0x7f9c883113d2 in clone (/usr/lib/libc.so.6+0xff3d2)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /home/fuzzmachine/git/janus/janus-trace/ice.c:574:4 in janus_plugin_session_is_alive
+Thread T6 created by T0 here:
+#0 0x5574cb52da64 in pthread_create (/home/fuzzmachine/git/janus/janus-trace/fuzzers/out/signaling_fuzzer+0x2fba64)
+#1 0x7f9c88bebdf9 (/usr/lib/libglib-2.0.so.0+0x48df9)
+
+==228959==ABORTING
+MS: 8 ChangeBit-Custom-CustomCrossOver-ShuffleBytes-ChangeBinInt-Custom-CustomCrossOver-CustomCrossOver-; base unit: 6f7aacef359b41d15fe436bd64d1209f1360fda8
+```
+or
+
+![gdb](/img/multipledos/576_a.png)
+
+So come on, misaligned addresses? pwndbg output? Surely... Surely this has to be it! This time a shell will manifest out of thin air right? Let's see.
+
+The issue is very similar to the previous one, also failing on the session->source deref but in a different plugin.
+
+The problem is still that `janus_request_destroy` may decide to destroy your request(session->source) halfway through `janus_session_notify_event` (line 678)
+
+![notify_me_senpai](/img/multipledos/576_c.png)
+
+or, even worse, at `janus_session_notify_event` (line 681) causing a null pointer deref and segfault
+
+![segfault](/img/multipledos/576_d.png)
+
+or if the address was already re-used it can even cause a memory misalignment issue.
+
+If we could spray the heap just right, control the race condition to always happen on line 681, and overwrite the address on `session->source->transport->send_message()` with just the right thing, we could have control!  
+
+While this is all very promising, after a weeks of trying to consistently reproduce this issue, I still only managed to get it semi-consistently. The otherwise amazing [rr debug](https://rr-project.org/) project also doesn't like to dance with my binaries.
+
+In the end I decided that it will be more beneficial to my sanity and to the Janus project's security if I simply reported it to them, and let them fix it.
+
+# Finale
+
+So that's it, "Multiple DoS" CVEs are a result of bugs that crash the server, but don't really give you a good primitive to work with. I would assume that behind every RCE there is 10 DoS issues that nobody hears about as they are just not as fancy. There is a [giant step](https://www.youtube.com/watch?v=30FTr6G53VU) between crashing something and actually injecting your own code, and "multiple DoS" tickets are a collection of those issues that could not take that step.

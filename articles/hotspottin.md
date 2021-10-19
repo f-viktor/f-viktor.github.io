@@ -1,0 +1,167 @@
+---
+layout: default
+---
+
+# When to do This
+
+In short: when normal proxying just doesnt cut it.  
+Let's say you want to "debug" a mobile application that is not (or only partially) proxy-aware.    
+Let's say this same mobile application cannot be proxied from Android-studio for whatever reason. (maybe it doesn't work there, or you only want one port to be proxied and not another)  
+Maybe you want to "debug" the traffic of an IoT device that is spying on you and sending data to a foreign government.
+For those use-cases, you can set up a Wi-Fi network and selectively proxy some or **ALL** of the traffic of a device.
+
+# Preparation
+
+First, do yourself a favor and
+```
+sudo su
+```
+
+Start with a clean slate, kill NetworkManager because it's going to block interfaces and restart them and just stab you in the knee randomly. If something doesn't work in this writeup, first step of debugging should be `systemctl status NetworkManager`. Also, just wipe iptables if you are not sure.
+
+```
+systemctl stop NetworkManager
+iptables -t nat -F
+iptables -t mangle -F
+iptables -F
+iptables -X
+```
+Also make sure that your device [trusts the HTTPS certificate](/articles/usercerts) of your itnercepting proxy.
+
+# Setting up a Virtual interface
+
+It's ideal to set up a [virtual interface](https://wiki.archlinux.org/index.php/software_access_point) so you don't mess up your actual interfaces.  
+`wlp3s0` is the name of your actual wifi interface in this command:
+```
+iw dev wlp3s0 interface add wlan_ap  type managed addr 12:34:45:67:78:90
+```
+(you can generate a valid MAC address via `macchanger -r wlan_ap` if you feel like it)  
+It should look something like this:
+
+```
+root@bahia:~$ ip a
+2: wlp3s0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether 20:75:23:11:af:63 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.0.11/24 brd 192.168.0.255 scope global dynamic noprefixroute wlp3s0
+       valid_lft 6506sec preferred_lft 6506sec
+    inet6 fe80::1088:dede:beef:da79/64 scope link noprefixroute
+       valid_lft forever preferred_lft forever
+6: wlan_ap: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN group default qlen 1000
+    link/ether 1a:12:ee:35:f6:12 brd ff:ff:ff:ff:ff:ff permaddr 12:34:45:67:78:90
+```
+
+configure  `/etc/hostapd/hostapd.conf`  do not add the bridge interface but set `interface` to your virtual ap, then set `ssid`, `wpa2 passphrase` and `key management` etc. Example (you can leave the rest on default):
+```
+interface=wlan_ap
+ssid=NSA12
+hw_mode=g
+#you might need to set channel to the same as you are connected if your wifi interface is potato
+channel=1
+own_ip_addr=127.0.0.1
+wpa=2
+wpa_passphrase=If_you_found_this_it's_probably_too_late
+wpa_key_mgmt=WPA-PSK
+```
+Give the device an IP address:
+```
+ip addr add 192.168.123.1/24 dev wlan_ap
+```
+Start hostapd
+```
+systemctl start hostapd
+```
+
+Before moving forward, verify that your wifi hotspot is visible, and you can connect.
+You'll have to set a static client ip address for now, but if your IoT device is not capable of doing that keep reading until the DHCP part.
+
+# Adding internet connectivity to the hotspot
+
+Now we want to [share our internet connection](https://wiki.archlinux.org/index.php/Internet_sharing#Configuration) with our new virtual interface and the devices conencted to it.  
+First, allow packet forwarding between your interfaces:
+```
+sysctl net.ipv4.ip_forward=1
+```
+Then set up a simple NAT for the virtual interface. I will use the wifi interface in this example as the source of the internet, but if your wifi adapter is not capable of being an AP and a client device at the same time, you can replace wlp3s0 with eth0 or whatever your cable interface is. It is also possible to make both the AP and the client device virtual if your device cannot work with one virtual and one physical wifi interface. (Just create another virtual interface and configure internet access on it.) You want the highest routing priority interface to be the internet source if you have multiple ones, because that's where your pc will route packets by default.
+
+```
+iptables -t nat -A POSTROUTING -o wlp3s0 -j MASQUERADE
+iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -i wlan_ap -o wlp3s0 -j ACCEPT
+```
+Before moving forward, verify that your wifi hotspot provides internet access.
+(If it doesn't work, check wireshark. Make sure that the packages go to the interface you expected in case you have multiple interfaces connected to the internet at a time)  
+This is also a good time to take note of what ports your application is using via wireshark.
+
+# Redirecting packets to local proxy
+
+So now you can see all the traffic in wireshark, but you also want to see traffic in your intercepting proxy. For that you first need to allow redirections to localhost.
+
+```
+sysctl -w net.ipv4.conf.all.route_localnet=1
+```
+
+Then you can pick individual ports to be redirected to localhost
+
+```
+iptables -t nat -A PREROUTING -i wlan_ap -p tcp --dport 80 -j DNAT --to 127.0.0.1:80
+iptables -t nat -A PREROUTING -i wlan_ap -p tcp --dport 443 -j DNAT --to 127.0.0.1:443
+iptables -t nat -A PREROUTING -i wlan_ap -p tcp --dport 8080 -j DNAT --to 127.0.0.1:8080
+```
+
+You can also redirect traffic to another computer and even per device based on source ip
+
+```
+iptables -t nat -A PREROUTING -i wlan_ap -s 192.168.123.144 -p tcp --dport 443 -j DNAT --to 192.168.1.88:443
+```
+
+Allow 443 and above to be bound by any user
+
+```
+sudo sysctl net/ipv4/ip_unprivileged_port_start=443
+```
+
+Make sure you have invisible proxies set up on the ports you are redirecting.  
+Now you should see traffic in your proxy.
+
+# Setting up DHCP on your network
+
+Some IoT devices will only be able to connect to a network if they get the gateway IP and their own IP via DHCP. For that, it's useful to set up `dnsmasq`.
+
+So edit `/etc/dnsmasq.conf` and change these accordingly
+
+```
+interface=wlan_ap
+dhcp-range=192.168.123.50,192.168.123.150,12h
+```
+Then just start dnsmasq
+
+```
+systemctl start dnsmasq
+```
+
+# TL;DR
+
+If you have done this before and you have all the config files set up, just copy and paste this, change interface names and proxy rules
+
+```
+# define interfaces
+WIFI=wlp3s0
+INTERNET=enp0s31f6
+
+# set up hotspot
+systemctl stop NetworkManager
+iw dev $WIFI interface add wlan_ap type managed addr 12:34:45:67:78:90
+ip addr add 192.168.123.1/24 dev wlan_ap
+systemctl start hostapd
+sysctl net.ipv4.ip_forward=1
+iptables -t nat -A POSTROUTING -o $INTERNET -j MASQUERADE
+iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -i wlan_ap -o $INTERNET -j ACCEPT
+sysctl net/ipv4/ip_unprivileged_port_start=443
+sysctl -w net.ipv4.conf.all.route_localnet=1
+systemctl start dnsmasq
+
+# redirects to be added
+iptables -t nat -A PREROUTING -i wlan_ap -p tcp --dport 443 -j DNAT --to 127.0.0.1:443
+iptables -t nat -A PREROUTING -i wlan_ap -s 192.168.123.144 -p tcp --dport 443 -j DNAT --to 192.168.1.88:443
+```
