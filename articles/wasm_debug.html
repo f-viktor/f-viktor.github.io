@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+
+<!-- Begin Jekyll SEO tag v2.7.1 -->
+<title>f-viktor@github.io% | Hack the planet.</title>
+<meta name="generator" content="Jekyll v4.2.0" />
+<meta property="og:title" content="f-viktor@github.io%" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Hack the planet." />
+<meta property="og:description" content="Hack the planet." />
+<meta property="og:site_name" content="f-viktor@github.io%" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="f-viktor@github.io%" />
+<script type="application/ld+json">
+{"@type":"WebPage","description":"Hack the planet.","headline":"f-viktor@github.io%","url":"/articles/wasm_debug.html","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+
+<script>
+	var items = Array("Tell me about Bane, why does he wear the mask?",
+			  "Nobody ever made profit by \"hacking for fun and profit\"",
+        "HACK THE PLANEEEEEEEET!444!!!!!",
+			  "It's like that show Becker",
+			  "The Kali-er you become, the more your VM will crash",
+			  "I use Arch btw",
+			  "God is dead. God wemains dead. And we have kiwwed him.",
+			  "I like elephants and God likes elephants",
+			  "I will stop the motor of the world",
+        "Reject modernity, return to CLI");
+	var item = items[Math.floor(Math.random() * items.length)];
+</script>
+
+  </head>
+
+  <body onload="document.getElementById('deep').innerHTML = item;">
+
+    <header>
+      <div class="container">
+        <a id="a-title" href="/">
+          <h1>f-viktor@github.io%</h1>
+        </a>
+
+
+	<h2> <div id="deep"> </div> </h2>
+      </div>
+    </header>
+    <div class="container">
+      <section id="main_content">
+        <h1 id="wasm---setting-up-the-debugging-environment">WASM - Setting up the debugging environment</h1>
+
+<p>To exploit WebAsembly, we need a way to inspect it’s variables, and memory while it runs. If you look this up, you will see two articles coming up over and over again.<br />
+<a href="https://developer.chrome.com/blog/wasm-debugging-2020/">Debugging WebAssembly with modern tools</a><br />
+<a href="https://thenewstack.io/the-pain-of-debugging-webassembly/">The Pain of Debugging WebAssembly</a></p>
+
+<p>So is it easy to debug WebAssembly with modern tools, or is it a pain? In reality, very few people actually use this technology, and there is not a high demand for debugging tools. In fact the only avaliable option for the time being seems to be this extension for chromium:<br />
+<a href="https://goo.gle/wasm-debugging-extension">C/C++ DevTools Support (DWARF)</a></p>
+
+<p>You’ll also want to enable WebAssembly debugging in the DevTools Experiments. Open Chrome DevTools, click the gear (⚙) icon in the top right corner of DevTools pane, go to the Experiments panel and tick WebAssembly Debugging: Enable DWARF support.</p>
+
+<p><img src="/img/wasm/debugsettings.png" alt="I totally stole this from the first article" /></p>
+
+<p>Restart chromium after this, the extension is not working unless it shows up in a nice purple color.</p>
+
+<p>To use this extension you will have to open the developer tools, go to sources, pause execution, and then find your .c file in the call stack. To see it, you’ll have to compile your binary with the <code class="language-plaintext highlighter-rouge">-g</code> option, and you will need the extension to be active.</p>
+
+<p><img src="/img/wasm/callstack.png" alt="I totally stole this from the first article" /></p>
+
+<p>You can open the memory inspector, if you find a variable in scope, that is actually stored in linear memory. If it is, you will get an option to “Open in memory inspectior window”. Your best bet are strings for this.</p>
+
+<p>“But wait!” - I hear you say - “All of this only works with .c files? I thought you can make WASM binaries from golang, Rust and other languages too!”. Well yes, however those languages are memory safe, so there’s not much of a point in trying to exploit them. This, of course, also means, that your hacking options are reduced to only a small section of what is already a very niche software stack.</p>
+
+<p><a href="https://www.usenix.org/system/files/sec20-lehmann.pdf">Before going to the tasks, please read this, it will help a lot.</a></p>
+
+<p>Sidenote: The tasks are all compiled with emscripten, which takes input in a popup window before the task starts. After sending in your input, it will pop up again until you press cancel. To use it correctly, you’ll need to enter your input in the first popup, and cancel the second one.</p>
+
+      </section>
+    </div>
+
+  </body>
+</html>
