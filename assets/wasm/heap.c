@@ -1,4 +1,4 @@
-//emcc -s WASM=1 -s MALLOC=emmalloc -g heap.c -o heap.html
+//emcc -s WASM=1 -s MALLOC=emmalloc -gsource-map --source-map-base "http://localhost:4000/assets/wasm/" heap.c -o heap.html
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

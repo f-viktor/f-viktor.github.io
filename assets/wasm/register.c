@@ -12,9 +12,9 @@ void grow_stack(int recDepth, char* input) {
 	grow_stack(recDepth-1,input);
     } else {
 	strncpy(spacing,input,strlen(input));
+
 	//pretend this puts() call writes to a user database
 	//make potatoboi an Admin
-	//puts("username,password,isAdmin");
 	puts("potatoboi,password1,False");
     }
 	
