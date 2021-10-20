@@ -1,0 +1,252 @@
+I"�<h1 id="how-to--reproduce-rowhammer-on-ddr4-trrespass">How to  reproduce RowHammer on DDR4 (TRRespass)</h1>
+<p><a href="https://people.inf.ethz.ch/omutlu/pub/Revisiting-RowHammer_isca20-FINAL-DO-NOT_DISTRIBUTE.pdf">RowHammer</a> is a hardware-level attack that can be exploited in various ways (including <a href="https://github.com/IAIK/rowhammerjs/blob/master/javascript/rowhammer.js">JavaScript</a>) to corrupt memory, even in the kernel space. This obviously makes it very attractive, <a href="https://i.pinimg.com/originals/1e/15/24/1e1524da88e62155880301cf87b18835.jpg">and yet</a> there is very little documentation on how to exploit it on modern hardware. (Spoiler alert) that’s because it’s extremely impractical to exploit.</p>
+
+<h2 id="rowhammer">RowHammer</h2>
+<p>So <a href="https://people.inf.ethz.ch/omutlu/pub/Revisiting-RowHammer_isca20-FINAL-DO-NOT_DISTRIBUTE.pdf">RowHammer</a> was originally reported in 2014 on DDR3, and much of the research is DDR3 specific. The vulnerability relies on electromagnetic interference between the densely packed cells in a DRAM module. On an abstract level, you can think of a DRAM module as a matrix of capacitors with gates.</p>
+
+<p><img src="/img/rowhammer/ramstruct.png" alt="DRAM" /></p>
+
+<p>The “Wordline” is responsible for opening the gate, and the “bitline” is responsible for setting or reading the value. The value is stored in the capacitor in the form of charge. The capacitor naturally loses charge over time, therefore it’s value is periodically refreshed. It also loses charge when it is read, and therefore it is refreshed after every read also.</p>
+
+<p>RowHammer aims to generate electromagnetic interference from nearby rows, to partially open the transistor without triggering a refresh of the row. This causes the capacitor to drain faster, to the point where it changes value, before the periodic refresh reaches it. It may also induce charge to set a bit from 0 to 1. My understanding is that this effect relies on <a href="https://en.wikipedia.org/wiki/Faraday%27s_law_of_induction">Faraday’s law of induction</a> and works much like <a href="https://www.youtube.com/watch?v=Jys3VPYOx1o">transformers</a>.</p>
+
+<p>On a very basic level a RowHammer exploit consists of spamming (hammering) read on the “Aggressor” rows that are adjacent to the “Victim” row.</p>
+
+<p><img src="/img/rowhammer/victim.png" alt="agressor_vs_victim" /></p>
+
+<p>In reality, there are a few extra steps, such as <a href="https://github.com/IAIK/drama">identifying</a> or <a href="https://github.com/google/rowhammer-test">brute-forcing</a> physically adjacent memory rows, and flushing the cache so that the read is actually performed from memory. The NaCl sandbox actually removed direct <code class="language-plaintext highlighter-rouge">cflush</code> call support to <a href="https://googleprojectzero.blogspot.com/2015/03/exploiting-dram-rowhammer-bug-to-gain.html">mitigate</a> this issue. Further complication is presented by ECC memory, where we need to flip multiple bits to bypass error correction.  An example exploit would look something like:</p>
+
+<div class="language-go highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">code1a</span><span class="o">:</span>
+  <span class="n">mov</span> <span class="p">(</span><span class="n">X</span><span class="p">),</span> <span class="o">%</span><span class="n">eax</span>  <span class="c">// read from address X</span>
+  <span class="n">mov</span> <span class="p">(</span><span class="n">Y</span><span class="p">),</span> <span class="o">%</span><span class="n">ebx</span>  <span class="c">// read from address Y</span>
+  <span class="n">clflush</span> <span class="p">(</span><span class="n">X</span><span class="p">)</span>    <span class="c">// flush cache for address X</span>
+  <span class="n">clflush</span> <span class="p">(</span><span class="n">Y</span><span class="p">)</span>    <span class="c">// flush cache for address Y</span>
+  <span class="n">mfence</span>
+  <span class="n">jmp</span> <span class="n">code1a</span>
+</code></pre></div></div>
+
+<h2 id="trrespass">TRRespass</h2>
+<p>Several <a href="https://download.vusec.net/papers/trrespass_sp20.pdf">mitigation</a> ideas were proposed, but a unified solution was not agreed upon. The DDR4 specification includes a parameter where the manufacturers can set the safe amount of activations for rows, but it is rarely used. Manufacturers basically cooked their own mitigation methods but they seem to have arrived mostly at the same conclusion. They track the hammered rows, and refresh rows adjacent to them. These mitigations are collectively called Target Row Refresh (TRR).</p>
+
+<p>This is almost exclusively done by the memory controller on the chip, except for the edge case of <a href="https://ark.intel.com/content/www/us/en/ark/products/64594/intel-xeon-processor-e5-2620-15m-cache-2-00-ghz-7-20-gt-s-intel-qpi.html">one specific</a> Intel server chip, where it’s done by the CPU. It seems to have been an artifact of the transitional when DDR3 was still in use, and RowHammer seemed to reasonable problem.</p>
+
+<p>The research done by <a href="https://www.vusec.net/projects/trrespass/">vusec</a> stipulated that there must be only so many rows that can be reasonably tracked by these mitigation methods without performance loss. So they simply increased the number of aggressor rows from 2 to anywhere between 3 and 31. Aggressor rows are also sometimes called “<a href="https://i.kym-cdn.com/photos/images/newsfeed/000/550/009/39a.gif">sides</a>” for example a “2-sided RowHammer attack” involves 2 aggressor rows and 1 victim row. Similarly, a “9-sided RowHammer attack” would mean 9 aggressor rows and 8 victim rows between them.</p>
+
+<p><img src="/img/rowhammer/ruwflips.png" alt="flips" /></p>
+
+<p>It appears that their assumption was correct. You can also see that, once they surpass the mitigation’s limits (9-10 rows), the further they increase the number of aggressor rows, the less efficient the exploit becomes. This is because the more rows you are hammering, the less you can hammer any given row within a refresh cycle.</p>
+
+<p>This is also the reason why <a href="https://github.com/vusec/trrespass">TRResspass</a> (the multi-aggressor variant of RowHammer) should not be used to exploit DDR3 chips. In fact DDR3 chips are less densely packed than DDR4, therefore they are less vulnerable to electromagnetic interference from adjacent rows. This means that they require a far higher number of activations to cause a bitflip than DDR4. (Of course there are more variables in play than simply the distance of adjacent rows, but the measurements done by vusec show that <a href="https://download.vusec.net/papers/trrespass_sp20.pdf">DDR4 without protections is more vulnerable than DDR3</a>)</p>
+
+<p><img src="/img/rowhammer/trr.png" alt="TRRespass" /></p>
+
+<p>A problem this presents is that you can no-longer depend on brute-forcing adjacent rows. You need to have definite knowledge about the physical mapping of your memory, to identify 30 rows that are all adjacent to each other.</p>
+
+<h2 id="enter-drama">Enter DRAMA</h2>
+
+<p><a href="https://github.com/IAIK/drama">DRAMA</a> (DRAM-A, get it?) is a tool for “<a href="https://en.wikipedia.org/wiki/Guessing">Reverse-Engineering</a>” memory controller logic. My very basic understanding is that, this tool relies on the shared row buffer increasing access latency if <a href="https://www.usenix.org/conference/usenixsecurity16/technical-sessions/presentation/pessl">two accesses happen in the same row</a>. Based on this information it will try to identify the memory mapping functions of the memory controller.</p>
+
+<p>Vusec actually <a href="https://github.com/vusec/trrespass/tree/master/drama">modified DRAMA</a> so it spits out the function masks and the row mask. To use it, follow these steps:</p>
+
+<ol>
+  <li>Build the executable with <code class="language-plaintext highlighter-rouge">make</code></li>
+  <li>Enable hugepages support with <code class="language-plaintext highlighter-rouge">sudo ./hugepage.sh</code></li>
+  <li>Run the executable bound to a CPU core <code class="language-plaintext highlighter-rouge">sudo taskset 0x2 ./obj/tester -o access.csv</code></li>
+  <li>Wait a few minutes, then terminate the process</li>
+  <li>Run the graph generator script on the output <code class="language-plaintext highlighter-rouge">python ../py/histogram.py access.csv</code></li>
+  <li>The resulting graph should have 2 peaks one small and one big
+<img src="/img/rowhammer/graph.png" alt="latency_graph" /></li>
+  <li>Identify the threshold between the two peaks, in this case it would be about 260<br />
+ (Left: normal access time; Right: latency when there is a buffer conflict)</li>
+  <li>Re-run the script with the threshold set <code class="language-plaintext highlighter-rouge">sudo taskset 0x2 ./obj/tester -v -t 260</code></li>
+  <li>Say a short prayer to whatever <a href="https://www.youtube.com/watch?v=dGDH3meSPyk">divine figure</a> you hold dear, try not to touch anything</li>
+  <li>Get a broken or partial output:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>~~~~~~~~~~ Candidate functions ~~~~~~~~~~
+[ LOG ] - #Bits: 1
+[ LOG ] - #Bits: 2
+[ LOG ] - #Bits: 3
+[ LOG ] - #Bits: 4
+[ LOG ] - #Bits: 5
+[ LOG ] - #Bits: 6
+~~~~~~~~~~ Found Functions ~~~~~~~~~~
+~~~~~~~~~~ Looking for row bits ~~~~~~~~~~
+[LOG] - Set #0
+[LOG] - 2fc6c6b80 - 2c2d307c2	 Time: 191 &lt;== GOTCHA
+[LOG] - 2fc6c6b80 - 2de75e862	 Time: 194 &lt;== GOTCHA
+[LOG] - 2fc6c6b80 - 2fb41088a	 Time: 192 &lt;== GOTCHA
+[LOG] - 2fc6c6b80 - 2fea78b65	 Time: 202 &lt;== GOTCHA
+[LOG] - 2fc6c6b80 - 2b646c9d1	 Time: 192 &lt;== GOTCHA
+[LOG] - Set #1
+[LOG] - 2c04a8f80 - 2ad6699ca	 Time: 196 &lt;== GOTCHA
+[LOG] - 2c04a8f80 - 2e6fdff18	 Time: 190 &lt;== GOTCHA
+[LOG] - 2c04a8f80 - 2a7d03171	 Time: 198 &lt;== GOTCHA
+[LOG] - 2c04a8f80 - 2eca21e7e	 Time: 189 &lt;== GOTCHA
+[LOG] - 2c04a8f80 - 29febeb18	 Time: 189 &lt;== GOTCHA
+</code></pre></div>    </div>
+  </li>
+  <li>Play around with increasing and decreasing the threshold</li>
+  <li>Try to close every process that could interfere, or maybe open some</li>
+  <li>Give up, and try on a different computer entirely</li>
+  <li>Get an actual output:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>~~~~~~~~~~ Found Functions ~~~~~~~~~~
+Valid Function: 0x4080 bits: 7 + 14
+Valid Function: 0x88000 bits: 15 + 19
+Valid Function: 0x110000 bits: 16 + 20
+Valid Function: 0x220000 bits: 17 + 21
+Valid Function: 0x440000 bits: 18 + 22
+Valid Function: 0x4b300 bits: 8 + 9 + 12 + 13 + 15 + 18
+0x4080
+0x88000
+0x110000
+0x220000
+0x440000
+0x4b300
+~~~~~~~~~ Looking for row bits ~~~~~~~~~~
+[LOG] - Set #0
+[LOG] - 2b46c5e40 - 2b46c2ebe Time: 230 &lt;== GOTCHA
+[LOG] - 2b46c5e40 - 2b46c2ae3 Time: 230 &lt;== GOTCHA
+[LOG] - 2b46c5e40 - 2b46c5a55 Time: 231 &lt;== GOTCHA
+[LOG] - 2b46c5e40 - 2b46c5208 Time: 225 &lt;== GOTCHA
+[LOG] - 2b46c5e40 - 2b46c6126 Time: 231 &lt;== GOTCHA
+[LOG] - Set #1
+[LOG] - 2547ba780 - 2547ba8f3 Time: 226 &lt;== GOTCHA
+[LOG] - 2547ba780 - 2547bfe5a Time: 231 &lt;== GOTCHA
+[LOG] - 2547ba780 - 2547bc536 Time: 242 &lt;== GOTCHA
+[LOG] - 2547ba780 - 2547ba8b4 Time: 227 &lt;== GOTCHA
+[LOG] - 2547ba780 - 2547b898c Time: 232 &lt;== GOTCHA
+[LOG] - Row mask: 0x7ff80000 bits: 19 + 20 + 21 + 22 + 23 + 24 + 25 + 26 + 27 + 28 + 29 + 30
+0x7ff80000
+</code></pre></div>    </div>
+    <p>If you have an AMD CPU, you can also just look these numbers up in this <a href="https://www.amd.com/system/files/TechDocs/52740_16h_Models_30h-3Fh_BKDG.pdf">document</a>, however I have no idea where any of this is actually in here. You’ll have to find it tho, because this script will work even less on AMD. Even if you get a number, it will probably be incorrect.</p>
+  </li>
+</ol>
+
+<h2 id="running-trrespass">Running TRRespass</h2>
+<p>We need these numbers because we have to plug them into TRRespass. Modify <a href="https://github.com/vusec/trrespass/blob/master/hammersuite/src/main.c#L31">line 31 line in main.c</a>. Enter the numbers from the valid function(<code class="language-plaintext highlighter-rouge">0x4080, 0x88000, 0x110000, 0x220000, 0x440000, 0x4b300</code>), the number of them (<code class="language-plaintext highlighter-rouge">6</code>) and the row mask(<code class="language-plaintext highlighter-rouge">0x7ff80000</code>) in that line, in the following format:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{{{</span><span class="mi">0</span><span class="n">xnumbers</span><span class="p">,</span> <span class="mh">0xf</span><span class="n">rom</span><span class="p">,</span> <span class="mi">0</span><span class="n">xthe</span><span class="p">,</span> <span class="mi">0</span><span class="n">xvalid</span><span class="p">,</span> <span class="mh">0xfu</span><span class="n">nction</span><span class="p">,</span> <span class="mi">0</span><span class="n">xlist</span><span class="p">},</span> <span class="n">how_man_of_them_are_there</span><span class="p">},</span> <span class="mi">0</span><span class="n">xrowmask</span><span class="p">,</span> <span class="n">ROW_SIZE</span><span class="o">-</span><span class="mi">1</span><span class="p">};</span>
+</code></pre></div></div>
+<p>After that you can <code class="language-plaintext highlighter-rouge">make</code> the hammersuite executable.</p>
+
+<p>So hammersuite is a “<a href="https://twitter.com/onedevloperarmy/status/1133883406226513926?lang=en">fuzzer</a>” insofar as it tries to find the  number of aggressor rows and the vulnerable physical cells in your memory by guessing randomly. Certain cells and rows are simply more susceptible to electromagnetic interference due to manufacturing tolerances, so it’s worth trying different ones until something flips. The number of aggressor rows that TRR can mitigate against also varies by manufacturer between 2 and 18+. The fuzzing mode changes these parameters around randomly to find a cell prone to bit flips.</p>
+
+<p>To run it in fuzzer mode, simply start it as <code class="language-plaintext highlighter-rouge">./obj/tester -v -f</code>.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%hammersuite sudo ./obj/tester -v -f
+[INFO] d_base.row:90112
+[HAMMER] - r90139/r90141/r90150/r90152/r90161/r90163/r90172/r90174/r90183/r90185/r90194/r90196/r90205/r90207/r90216/r90218/r90227/r90229/r90238/r90240/r90249/r90251/r90260:
+zsh: segmentation fault  sudo ./obj/tester -v -f
+</code></pre></div></div>
+<p>Oh wait, I forgot! It’s intentionally broken. I wouldn’t say this is a bad thing, if everything else about this software worked perfectly. However because this entire repo is so janky, I was constantly unsure whether it has ever worked, or the whole exploit was a ruse. Anyway let’s debug!</p>
+
+<p>If we run the script by manually setting the number of aggressor rows, it seems to work fine. Try <code class="language-plaintext highlighter-rouge">./obj/tester -v -a 3</code>. If this doesn’t work for you, chances are that DRAMA gave you incorrect values or something else is <a href="https://i.kym-cdn.com/entries/icons/facebook/000/029/198/Dark_Souls_You_Died_Screen_-_Completely_Black_Screen_0-2_screenshot.jpg">broken</a>. If it does, continue along.</p>
+
+<p>So after a few steps in GDB we can see that the SEGFAULT happens here, when it is first first called:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">/</span><span class="n">src</span><span class="o">/</span><span class="n">hammer</span><span class="o">-</span><span class="n">suite</span><span class="p">.</span><span class="n">c</span>
+  <span class="mi">276</span> <span class="kt">void</span> <span class="nf">fill_row</span><span class="p">(</span><span class="n">HammerSuite</span> <span class="o">*</span><span class="n">suite</span><span class="p">,</span> <span class="n">DRAMAddr</span> <span class="o">*</span><span class="n">d_addr</span><span class="p">,</span> <span class="n">HammerData</span> <span class="n">data_patt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">reverse</span><span class="p">)</span>
+  <span class="mi">277</span> <span class="p">{</span>
+<span class="o">&gt;</span> <span class="mi">278</span>    <span class="k">if</span> <span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">vpat</span> <span class="o">!=</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)</span><span class="nb">NULL</span> <span class="o">&amp;&amp;</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">tpat</span> <span class="o">!=</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)</span><span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+  <span class="mi">279</span>       <span class="kt">uint8_t</span> <span class="n">pat</span> <span class="o">=</span> <span class="n">reverse</span> <span class="o">?</span> <span class="o">*</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">vpat</span> <span class="o">:</span> <span class="o">*</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">tpat</span><span class="p">;</span>
+  <span class="mi">280</span>       <span class="n">fill_stripe</span><span class="p">(</span><span class="o">*</span><span class="n">d_addr</span><span class="p">,</span> <span class="n">pat</span><span class="p">,</span> <span class="n">suite</span><span class="o">-&gt;</span><span class="n">mapper</span><span class="p">);</span>
+  <span class="mi">281</span>       <span class="k">return</span><span class="p">;</span>
+  <span class="mi">282</span> <span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">p</code> is a global <code class="language-plaintext highlighter-rouge">ProfileParams</code> variable that’s responsible for storing command line options etc.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">typedef</span> <span class="k">struct</span> <span class="n">ProfileParams</span> <span class="p">{</span>
+    <span class="kt">uint64_t</span> <span class="n">g_flags</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">char</span> <span class="o">*</span><span class="n">g_out_prefix</span><span class="p">;</span>
+    <span class="kt">char</span> <span class="o">*</span><span class="n">tpat</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="nb">NULL</span><span class="p">;</span>
+    <span class="kt">char</span> <span class="o">*</span><span class="n">vpat</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="nb">NULL</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">threshold</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">fuzzing</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="c1">// start fuzzing!!</span>
+    <span class="kt">size_t</span> <span class="n">m_size</span> <span class="o">=</span> <span class="n">ALLOC_SIZE</span><span class="p">;</span>
+    <span class="kt">size_t</span> <span class="n">m_align</span> <span class="o">=</span> <span class="n">ALIGN_std</span><span class="p">;</span>
+    <span class="kt">size_t</span> <span class="n">rounds</span> <span class="o">=</span> <span class="n">ROUNDS_std</span><span class="p">;</span>
+    <span class="kt">size_t</span> <span class="n">base_off</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">char</span> <span class="o">*</span><span class="n">huge_file</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">HUGETLB_std</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">huge_fd</span><span class="p">;</span>
+    <span class="kt">char</span> <span class="o">*</span><span class="n">conf_file</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">CONFIG_NAME_std</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">aggr</span> <span class="o">=</span> <span class="n">AGGR_std</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">ProfileParams</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>The problem is that <code class="language-plaintext highlighter-rouge">p</code> points outside of the allocated memory space:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pwndbg</span><span class="o">&gt;</span> <span class="n">print</span> <span class="n">p</span>
+<span class="err">$</span><span class="mi">1</span> <span class="o">=</span> <span class="p">(</span><span class="n">ProfileParams</span> <span class="o">*</span><span class="p">)</span> <span class="mh">0x2f30306b622e3338</span>
+<span class="n">pwndbg</span><span class="o">&gt;</span> <span class="n">print</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">vpat</span>
+<span class="n">Cannot</span> <span class="n">access</span> <span class="n">memory</span> <span class="n">at</span> <span class="n">address</span> <span class="mh">0x2f30306b622e3338</span>
+</code></pre></div></div>
+
+<p>It’s fine in the beginning but after running this a few times, it changes:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">/</span><span class="n">src</span><span class="o">/</span><span class="n">hammer</span><span class="o">-</span><span class="n">suite</span><span class="p">.</span><span class="n">c</span>
+  <span class="mi">146</span> <span class="kt">void</span> <span class="nf">print_start_attack</span><span class="p">(</span><span class="n">HammerPattern</span> <span class="o">*</span><span class="n">h_patt</span><span class="p">)</span>
+  <span class="mi">147</span> <span class="p">{</span>
+<span class="o">&gt;</span> <span class="mi">148</span> 	<span class="n">fprintf</span><span class="p">(</span><span class="n">out_fd</span><span class="p">,</span> <span class="s">"%s : "</span><span class="p">,</span> <span class="n">hPatt_2_str</span><span class="p">(</span><span class="n">h_patt</span><span class="p">,</span> <span class="n">ROW_FIELD</span> <span class="o">|</span> <span class="n">BK_FIELD</span><span class="p">));</span>
+  <span class="mi">149</span> 	<span class="nf">fflush</span><span class="p">(</span><span class="n">out_fd</span><span class="p">);</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">out_fd</code> is the handle of the log file, it seems that this function is responsible for writing our logs. So how is it changing <code class="language-plaintext highlighter-rouge">p</code> if <code class="language-plaintext highlighter-rouge">p</code> is not even used in this function? They are both on the <a href="https://en.wikipedia.org/wiki/Heap_overflow">heap</a>.</p>
+
+<p><img src="/img/rowhammer/heap1.png" alt="Heap1" /></p>
+
+<p>The buffer this function is writing in, is set to 256 bytes.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">/</span><span class="n">src</span><span class="o">/</span><span class="n">hammer</span><span class="o">-</span><span class="n">suite</span><span class="p">.</span><span class="n">c</span>
+  <span class="mi">128</span>  <span class="kt">char</span> <span class="o">*</span><span class="n">hPatt_2_str</span><span class="p">(</span><span class="n">HammerPattern</span> <span class="o">*</span> <span class="n">h_patt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">fields</span><span class="p">)</span>
+  <span class="mi">129</span>  <span class="p">{</span>
+<span class="o">&gt;</span> <span class="mi">130</span>  	<span class="k">static</span> <span class="kt">char</span> <span class="n">patt_str</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span>
+  <span class="mi">131</span>  	<span class="kt">char</span> <span class="o">*</span><span class="n">dAddr_str</span><span class="p">;</span>
+  <span class="mi">132</span>
+  <span class="mi">133</span>  	<span class="n">memset</span><span class="p">(</span><span class="n">patt_str</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mi">256</span><span class="p">);</span>
+  <span class="mi">134</span>
+  <span class="mi">135</span>  	<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">h_patt</span><span class="o">-&gt;</span><span class="n">len</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+  <span class="mi">136</span>  		<span class="n">dAddr_str</span> <span class="o">=</span> <span class="n">dAddr_2_str</span><span class="p">(</span><span class="n">h_patt</span><span class="o">-&gt;</span><span class="n">d_lst</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">fields</span><span class="p">);</span>
+  <span class="mi">137</span>  		<span class="n">strcat</span><span class="p">(</span><span class="n">patt_str</span><span class="p">,</span> <span class="n">dAddr_str</span><span class="p">);</span>
+  <span class="mi">138</span>  		<span class="k">if</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">!=</span> <span class="n">h_patt</span><span class="o">-&gt;</span><span class="n">len</span><span class="p">)</span> <span class="p">{</span>
+  <span class="mi">139</span>  			<span class="n">strcat</span><span class="p">(</span><span class="n">patt_str</span><span class="p">,</span> <span class="s">"/"</span><span class="p">);</span>
+  <span class="mi">140</span>  		<span class="p">}</span>
+  <span class="mi">141</span>
+  <span class="mi">142</span>  	<span class="p">}</span>
+  <span class="mi">143</span>  	<span class="k">return</span> <span class="n">patt_str</span><span class="p">;</span>
+  <span class="mi">144</span>  <span class="p">}</span>
+</code></pre></div></div>
+<p>If the number of rows written exceeds 21, it will overflow that buffer, and overwrite <code class="language-plaintext highlighter-rouge">p</code>:</p>
+
+<p><img src="/img/rowhammer/heap2.png" alt="Heap2" /></p>
+
+<p>Given that the fuzzer always starts with 23 aggressor rows, I doubt this was something they just didn’t notice. Although they claim to have used small memory modules for testing, perhaps they had less rows, and therefore the row IDs written here were slightly shorter. In any case, a quick and dirty fix is to simply increase the size of this buffer:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">/</span><span class="n">src</span><span class="o">/</span><span class="n">hammer</span><span class="o">-</span><span class="n">suite</span><span class="p">.</span><span class="n">c</span>
+  <span class="mi">128</span>  <span class="kt">char</span> <span class="o">*</span><span class="n">hPatt_2_str</span><span class="p">(</span><span class="n">HammerPattern</span> <span class="o">*</span> <span class="n">h_patt</span><span class="p">,</span> <span class="kt">int</span> <span class="n">fields</span><span class="p">)</span>
+  <span class="mi">129</span>  <span class="p">{</span>
+<span class="o">+</span> <span class="mi">130</span>  	<span class="k">static</span> <span class="kt">char</span> <span class="n">patt_str</span><span class="p">[</span><span class="mi">2560</span><span class="p">];</span>
+  <span class="mi">131</span>  	<span class="kt">char</span> <span class="o">*</span><span class="n">dAddr_str</span><span class="p">;</span>
+  <span class="mi">132</span>
+<span class="o">+</span> <span class="mi">133</span>  	<span class="n">memset</span><span class="p">(</span><span class="n">patt_str</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">,</span> <span class="mi">2560</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>After rebuilding the binary, we should now be able to start it in fuzzer mode, and hopefully get some flips:</p>
+
+<p><img src="/img/rowhammer/doaflip.png" alt="DoAFlip" /></p>
+
+<p>You can see the rows that have been hammered, and what values were changed to what. You can also count the number of aggressor rows used for the flip. After identifying the vulnerable rows you could narrow down the number of aggressor rows to the minimum necessary amount, and continue testing by setting it with the <code class="language-plaintext highlighter-rouge">-a</code> switch. According to <a href="https://download.vusec.net/papers/trrespass_sp20.pdf">vusec’s paper</a> you have about 1/4 chance for any given DDR4 memory module to be vulnerable. I’m still not sure if that’s because the rest is protected against the attack, or because this script works only on every fourth computer you try it on :D jk, their paper and research is great, I’m sure they know what they are talking about.</p>
+
+<h2 id="javascript-trrespass-smash">JavaScript TRRespass (SMASH)</h2>
+
+<p>So RowHammer was exploitable from <a href="https://github.com/IAIK/rowhammerjs/blob/master/javascript/rowhammer.js">JavaScript</a>, is TRRespass also? <a href="https://www.vusec.net/projects/smash/">Kinda</a>.
+The reality is that ideally you would need a victim that has transparent hugepages (THP) enabled, which is virtually nobody. Even if you bypass that problem, this exploit has to be tuned specifically to each hardware so that timings just line up perfectly. This means that part of your exploit chain would be a fuzzer that tries to figure out the correct parameters for whatever machine it finds itself on. Or you would need to identify the exact hardware setup of your victim and test out the parameters before the attack. Once you have that, you still only have a 1/4 chance that the memory itself is vulnerable to the attack. So even though vusec <a href="https://www.youtube.com/watch?v=k2D4D-kF-ic&amp;feature=emb_title">proved</a> it to be possible, it is simply less practical than just finding/buying a software exploit. On the other hand, it is also much harder to mitigate against.</p>
+
+<h2 id="how-would-you-exploit-this">How would you exploit this</h2>
+
+<p>So let’s say you can flip random bits in memory. Why is this even a problem? What bits are you supposed to flip to turn this into a useful <a href="https://www.vusec.net/projects/flip-feng-shui/">exploit</a>?
+Vusec presented two exploit vectors with RowHammer, both of which were designed to exploit across VM’s running on the same cloud server. They relied on the hypervisor’s memory management merging the physical storage of both VM’s memory if they are identical. Once the memory pages are merged, triggering RowHammer can change both VM’s memory without alerting the hypervisor about it. The two PoCs they presented were:</p>
+<ol>
+  <li><a href="https://www.youtube.com/watch?v=TqWmP2owbdo">Changing the allowed SSH key on the victim host to something that is easy to factorize</a></li>
+  <li><a href="https://www.youtube.com/watch?v=cs7xDkBG7_4">Changing the mirror url for apt and the signing certificate</a></li>
+</ol>
+
+<p>These two methods are also extensively detailed in these <a href="https://www.usenix.org/system/files/conference/usenixsecurity16/sec16_paper_razavi.pdf">two</a> <a href="https://www.usenix.org/sites/default/files/conference/protected-files/security16_slides_razavi.pdf">papers</a>.</p>
+
+<p>Local privilege escalation is also a good use-case, since this attack can bypass software-level restriction on writing memory. <a href="https://googleprojectzero.blogspot.com/2015/03/exploiting-dram-rowhammer-bug-to-gain.html">Google Project Zero</a> released an <a href="https://github.com/offensive-security/exploitdb-bin-sploits/raw/master/bin-sploits/36310.tar.gz">exploit</a> for RowHammer that grants write access to the Page Table Entry (PTE) of the attacking process, which can be further escalated to gain kernel privileges. This approach could be further used to escape sandboxes as they have done with NaCl and it could perhaps even be done with a browser sandbox.</p>
+
+<p>These attacks all relied on the fact that once a vulnerable bit was identified, the bit flip on it could be <a href="https://www.youtube.com/watch?v=0U7511Fb4to">reliably reproduced</a>. This means that if you have a reliable bit flip, you can align your memory such that said bit aligns with something critical. This also seems to be the case for TRRespass, so in theory these attacks could all be ported forward. I imagine this has not happened yet because of the sheer impracticality of doing so.</p>
+:ET

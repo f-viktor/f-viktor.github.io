@@ -1,0 +1,916 @@
+I"O�<h1 id="the-411">The 411</h1>
+<p>in this blogpost I’ll explain the basics of how to make a fuzzer using libVPX as an example project.</p>
+
+<h1 id="fuzzing-overview">Fuzzing overview</h1>
+<p>Fuzzing projects tend to follow the same main steps in most cases.</p>
+
+<ol>
+  <li>Pick a library and try to build it</li>
+  <li>Identify a suitable fuzzer for the lib (AFL++/LibFuzzer/etc)</li>
+  <li>Build the lib (or part of it) with instrumentation</li>
+  <li>Find a target function</li>
+  <li>Create a suitable seed corpus (+ grammar)</li>
+  <li>The machine turns, the creator rests</li>
+  <li>Check coverage and adjust the seed</li>
+  <li>Go back to step 4</li>
+</ol>
+
+<p>We’ll go into more details for most of these steps</p>
+
+<h2 id="1-pick-a-library-and-try-to-build-it">1. Pick a library and try to build it</h2>
+
+<p><a href="https://github.com/webmproject/libvpx">LibVPX</a> is the codec used for VP8 and VP9 video decoding/encoding. It’s used by a lot of software, including chrome. It’s mandatory to implement if you plan on supporting WebRTC, so all major browsers make use of it. WebRTC is also a peer to peer protocol, which means that the video you send, gets decoded directly by your peer’s computer. Given all this, an exploit in libVPX’s decoder could grant you RCE on the machine of whoever you videocall with. Importantly, the codec is written in a memory-unsafe language.</p>
+
+<p>Thus, it is not surprising that it is included in oss-fuzz, and the decoder is being actively fuzzed by the project. The encoder isn’t tho, so let’s make that our aim, even though it’s kinda pointless in practice.</p>
+
+<p>Let’s try to build it. As a first step, it’s useful to read the readme. We are basically in the same shoes as any developer at this point, if they can build it somehow, so can we.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2. Out-of-tree builds
+Out of tree builds are a supported method of building the application. For
+an out of tree build, the source tree is kept separate from the object
+files produced during compilation. For instance:
+
+  $ mkdir build
+  $ cd build
+  $ ../libvpx/configure &lt;options&gt;
+  $ make
+
+3. Configuration options
+The 'configure' script supports a number of options. The --help option can be
+used to get a list of supported options:
+  $ ../libvpx/configure --help
+
+</code></pre></div></div>
+<p>That looks very handy, and we also get configure options for different build presets:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>--help print this message
+--log=yes|no|FILE file configure log is written to [config.log]
+--target=TARGET target platform tuple [generic-gnu]
+--cpu=CPU optimize for a specific cpu rather than a family
+--extra-cflags=ECFLAGS add ECFLAGS to CFLAGS []
+--extra-cxxflags=ECXXFLAGS add ECXXFLAGS to CXXFLAGS []
+--enable-extra-warnings emit harmless warnings (always non-fatal)
+--enable-werror treat warnings as errors, if possible
+(not available with all compilers)
+--disable-optimizations turn on/off compiler optimization flags
+--enable-pic turn on/off Position Independent Code
+--enable-ccache turn on/off compiler cache
+--enable-debug enable/disable debug mode
+--enable-gprof enable/disable gprof profiling instrumentation
+--enable-gcov enable/disable gcov coverage instrumentation
+--enable-thumb enable/disable building arm assembly in thumb mode
+--disable-dependency-tracking disable to speed up one-time build
+
+Codecs:
+Codecs can be selectively enabled or disabled individually, or by family:
+   --disable-&lt;codec&gt;
+is equivalent to:
+   --disable-&lt;codec&gt;-encoder
+   --disable-&lt;codec&gt;-decoder
+
+Codecs available in this distribution:
+   vp8: encoder decoder
+   vp9: encoder decoder
+</code></pre></div></div>
+
+<p>So I tried to just build as described in the readme and it worked:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mkdir build
+cd build
+../libvpx/configure --enable-vp8 --enable-vp9
+make
+</code></pre></div></div>
+
+<p>The build results in the vpxenc and vpxdec binaries, and a lot of undeleted object files that were used during the build.</p>
+
+<p>They are self-contained executeables and do not depend on eternal codec libraries:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%built ldd ./vpxenc
+   linux-vdso.so.1 (0x00007fff447e8000)
+   libpthread.so.0 =&gt; /usr/lib/libpthread.so.0 (0x00007f69816b2000)
+   libstdc++.so.6 =&gt; /usr/lib/libstdc++.so.6 (0x00007f69814d5000)
+   libm.so.6 =&gt; /usr/lib/libm.so.6 (0x00007f698138f000)
+   libgcc_s.so.1 =&gt; /usr/lib/libgcc_s.so.1 (0x00007f6981375000)
+   libc.so.6 =&gt; /usr/lib/libc.so.6 (0x00007f69811ac000)
+  /lib64/ld-linux-x86-64.so.2 =&gt; /usr/lib64/ld-linux-x86-64.so.2 (0x00007f69819c0000)
+</code></pre></div></div>
+
+<p>Importantly we also get <em>libvpx.a</em>, a static library that we can link against our harness later, so that we don’t have to rebuild both at the same time if we want to modify something. If your project doesn’t build one of these by default you can use the <code class="language-plaintext highlighter-rouge">ar rcs staticlib.a input.o files.o and.o other.o objects.o </code> command to make one.</p>
+
+<p>You can see what objects are in the static library as such:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>objdump -a libvpx.a | grep "file format"
+vpx_decoder.c.o: file format elf64-x86-64
+vpx_encoder.c.o: file format elf64-x86-64
+vpx_codec.c.o: file format elf64-x86-64
+vpx_image.c.o: file format elf64-x86-64
+</code></pre></div></div>
+
+<p>Ideally we want 3 build processes:
+    1. Building a standalone fuzz-target
+    2. Building the library with instrumentation
+    3. Building the library for coverage</p>
+
+<h2 id="2-identify-a-suitable-fuzzer-for-the-lib-afllibfuzzeretc">2. Identify a suitable fuzzer for the lib (AFL++/LibFuzzer/etc)</h2>
+<p>Since this is an open-source C++ library, the classic AFL++ or LibFuzzer would both work fine. Let’s use LibFuzzer for the example as it’s a bit easier to understand, but AFL is largely the same process that we’ll investigate in a different post.</p>
+
+<h2 id="3-build-the-lib-or-part-of-it-with-instrumentation">3. Build the lib (or part of it) with instrumentation</h2>
+<p>So we know that we can build a static library from the repo with relative ease. We now want to “instrument” it. This basically means that we want to compile it in a way, that code blocks can report if they have been run. This is useful as our fuzzer will know how many code blocks it reached with a given input, and based on that it will be able to decide whether it’s a good or a bad input. To instrument for LibFuzzer, we’ll use llvm’s clang. clang has compile options that make it trivial to build an instrumented binary. If our project can be built with clang, we’ll just have to add a switch.</p>
+
+<p>As a first step it’s worth checking if there are already built in options for compilation with clang, if not, you’ll have to scrutinize the build process in depth.</p>
+
+<p>In our case <code class="language-plaintext highlighter-rouge">configure</code> has options for adding <code class="language-plaintext highlighter-rouge">CFLAGS</code> and <code class="language-plaintext highlighter-rouge">CXXFLAGS</code> which will be handy once we manage to build with clang:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>--extra-cflags=ECFLAGS add ECFLAGS to CFLAGS []
+--extra-cxxflags=ECXXFLAGS add ECXXFLAGS to CXXFLAGS []
+</code></pre></div></div>
+
+<p>But it doesn not have options to overwrite the compiler directly. What we can do however is to overwrite the env variables. Most make based build processes will use whatever is in CC and CXX if anything is set.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CC=clang CXX=clang++ LD=clang++ ../libvpx/configure --enable-vp8 --enable-vp9
+</code></pre></div></div>
+<p>This built the library with clang:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>readelf --string-dump .comment vpxdec
+
+String dump of section '.comment':
+[ 0] GCC: (GNU) 10.2.0
+[ 12] clang version 10.0.1
+</code></pre></div></div>
+
+<p>So now we can chose the compiler and linker, which means we can use LLVM’s libfuzzer.</p>
+
+<p>To actually instrument with LLVM you need to set the <code class="language-plaintext highlighter-rouge">-fsanitize=fuzzer-no-link</code> compiler option. You may also read people using <code class="language-plaintext highlighter-rouge">-fsanitiz=fuzzer,address</code> options. <code class="language-plaintext highlighter-rouge">fuzzer</code> tells the compiler that what you are compiling should be linked as a fuzzer, but in this case we just want to link the library normally with instrumentation, hence the <code class="language-plaintext highlighter-rouge">fuzzer-no-link</code>. Unfortunately this still presents me some weird linking errors sometimes so I usually just use whichever works :D</p>
+
+<p>the <code class="language-plaintext highlighter-rouge">address</code> option is for building with ASAN support.</p>
+
+<p>This is where things will start to break so I included here my misguided attempt for demonstration purposes. I tried to build as such:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CC=clang CXX=clang++ LD=clang++ ../libvpx/configure --extra-cflags=-fsanitize=fuzzer,address --extra-cxxflags=-fsanitize=fuzzer,address
+</code></pre></div></div>
+
+<p>That broke</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Toolchain is unable to link executables
+
+Configuration failed. This could reflect a misconfiguration of your
+toolchains, improper options selected, or another problem. If you
+don't see any useful error messages above, the next step is to look
+at the configure error log file (config.log) to determine what
+configure was trying to do when it died.
+</code></pre></div></div>
+<p>so let’s consult <code class="language-plaintext highlighter-rouge">conf.log</code></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang -m64 -DNDEBUG -O3 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -Wall -Wdeclaration-after-statement -Wdisabled-optimization -Wfloat-conversion -Wparentheses-equality -Wpointer-arith -Wtype-limits -Wcast-qual -Wvla -Wimplicit-function-declaration -Wmissing-declarations -Wmissing-prototypes -Wuninitialized -Wunreachable-code-loop-increment -Wunused -Wextra -Wundef -Wframe-larger-than=52000 -std=gnu89 -Wshorten-64-to-32 -fsanitize=fuzzer,address -c -o /tmp/vpx-conf-130441-1499.o /tmp/vpx-conf-130441-1499.c
+clang++ -m64 -o /tmp/vpx-conf-130441-1499.x /tmp/vpx-conf-130441-1499.o -lpthread
+/usr/bin/ld: /tmp/vpx-conf-130441-1499.o: in function `asan.module_ctor':
+vpx-conf-130441-1499.c:(.text+0x2): undefined reference to `__asan_init'
+/usr/bin/ld: vpx-conf-130441-1499.c:(.text+0x7): undefined reference to `__asan_version_mismatch_check_v8'
+/usr/bin/ld: /tmp/vpx-conf-130441-1499.o: in function `sancov.module_ctor_8bit_counters':
+vpx-conf-130441-1499.c:(.text.sancov.module_ctor_8bit_counters[sancov.module_ctor_8bit_counters]+0x10): undefined reference to `__sanitizer_cov_8bit_counters_init'
+/usr/bin/ld: vpx-conf-130441-1499.c:(.text.sancov.module_ctor_8bit_counters[sancov.module_ctor_8bit_counters]+0x23): undefined reference to `__sanitizer_cov_pcs_init'
+clang-10: error: linker command failed with exit code 1 (use -v to see invocation)
+</code></pre></div></div>
+
+<p>So the linker apparently cannot find ASAN. This is likely because it’s external dependency isn’t being linked.</p>
+
+<p>This is because the linker needs to have <code class="language-plaintext highlighter-rouge">-fsanitize=address</code> set to link ASAN to the binary. To correct this, we need to add LDFLAGS, but there is no option for it, so I just tried to set the env variable and it worked:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CC=clang CXX=clang++ LD=clang++ LDFLAGS=-fsanitize=address ../libvpx/configure --extra-cflags=-fsanitize=fuzzer,address --extra-cxxflags=-fsanitize=fuzzer,address
+</code></pre></div></div>
+
+<p>To the final build I added some extra flags that I stole from the example fuzzer for faster build times and memory management:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Some extra flags for good measure:
+
+CC=clang CXX=clang++ LD=clang++ LDFLAGS="-fsanitize=address -shared-libasan"\
+../libvpx/configure \
+--extra-cflags="-fsanitize=fuzzer-no-link,address -DVPX_MAX_ALLOCABLE_MEMORY=1073741824" \
+--extra-cxxflags="-fsanitize=fuzzer-no-link,address -DVPX_MAX_ALLOCABLE_MEMORY=1073741824" \
+--disable-unit-tests \
+--disable-webm-io \
+--enable-debug \
+--disable-vp8-decoder \
+--disable-vp9-decoder
+</code></pre></div></div>
+
+<p>limiting memory will be useful to not run out of memory during runs,
+disabling unnecessary stuff will shorten build time and make it easier to debug
+debug symbols will also help with that.</p>
+
+<h2 id="4-find-a-target-function">4. Find a target function</h2>
+<p>So we know that we want to fuzz the encoder as it doesn’t have a fuzzer yet, but we need to identify the actual function that would be called for encoding. If you are lucky there will be some examples or unit-tests included in the repository that will help you understand how to use certain functions. You can also check how the programs using this codec usually do it. If you have a specific target that uses a given library, it might be a smart idea to mimic exactly how it’s being used in your target application. If none of these are available for you, you’ll have to go source code diving to understand how the library works.</p>
+
+<p>Luckily for us, we have an <code class="language-plaintext highlighter-rouge">simple_encoder.c</code> file that we can use as a guideline. Let’s first try to understand what it does.</p>
+
+<p>This example file takes a YV12 file and encodes it into IVF. There is a lot of things here to be slimmed down, and make into a fuzzer.</p>
+
+<p>So this is our starting point to create fuzzing input:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// The details of the IVF format have been elided from this example for</span>
+<span class="c1">// simplicity of presentation, as IVF files will not generally be used by</span>
+<span class="c1">// your application. In general, an IVF file consists of a file header,</span>
+<span class="c1">// followed by a variable number of frames. Each frame consists of a frame</span>
+<span class="c1">// header followed by a variable length payload. The length of the payload</span>
+<span class="c1">// is specified in the first four bytes of the frame header. The payload is</span>
+<span class="c1">// the raw compressed data.</span>
+</code></pre></div></div>
+
+<p>We also get a bit more insight into how math works, if we can do an integer overflow on the width+height, we may overflow something:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// The frame is read as a continuous block (size width * height * 3 / 2)</span>
+<span class="c1">// from the input file. If a frame was read (the input file has not hit</span>
+<span class="c1">// EOF) then the frame is passed to the encoder. Otherwise, a NULL</span>
+<span class="c1">// is passed, indicating the End-Of-Stream condition to the encoder. The</span>
+<span class="c1">// `frame_cnt` is reused as the presentation time stamp (PTS) and each</span>
+<span class="c1">// frame is shown for one frame-time in duration. The flags parameter is</span>
+<span class="c1">// unused in this example. The deadline is set to VPX_DL_REALTIME to</span>
+<span class="c1">// make the example run as quickly as possible.</span>
+<span class="n">Extremely</span> <span class="n">important</span> <span class="k">for</span> <span class="n">a</span> <span class="n">stable</span> <span class="n">fuzzer</span><span class="o">:</span>
+<span class="c1">// Cleanup</span>
+<span class="c1">// -------</span>
+<span class="c1">// The `vpx_codec_destroy` call frees any memory allocated by the codec.</span>
+</code></pre></div></div>
+
+<p>To start off, we have a few arguments, some of these are clear, the rest I tried to guess based on their names</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">FILE</span> <span class="o">*</span><span class="n">infile</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">//input file handle</span>
+    <span class="n">vpx_codec_ctx_t</span> <span class="n">codec</span><span class="p">;</span> <span class="c1">//thing that implements codec interface</span>
+    <span class="n">vpx_codec_enc_cfg_t</span> <span class="n">cfg</span><span class="p">;</span> <span class="c1">//config of the encoder</span>
+    <span class="kt">int</span> <span class="n">frame_count</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">vpx_image_t</span> <span class="n">raw</span><span class="p">;</span>
+    <span class="n">vpx_codec_err_t</span> <span class="n">res</span><span class="p">;</span>
+    <span class="n">VpxVideoInfo</span> <span class="n">info</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span> <span class="p">}</span> <span class="p">};</span>
+    <span class="n">VpxVideoWriter</span> <span class="o">*</span><span class="n">writer</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">//likely the thing that assembles the output frames into a video</span>
+    <span class="k">const</span> <span class="n">VpxInterface</span> <span class="o">*</span><span class="n">encoder</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">// does this also implement a codec interface?</span>
+
+    <span class="c1">//output video parameters</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">fps</span> <span class="o">=</span> <span class="mi">30</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">bitrate</span> <span class="o">=</span> <span class="mi">200</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">keyframe_interval</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">max_frames</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">frames_encoded</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+    <span class="c1">// input arguments</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">codec_arg</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">width_arg</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">height_arg</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">infile_arg</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">outfile_arg</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">keyframe_interval_arg</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>After that we are parsing the input arguments, nothing special here although it is weird to me that they are parsing <code class="language-plaintext highlighter-rouge">max_frames</code> to long and then casting to int.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">exec_name</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="n">argc</span> <span class="o">!=</span> <span class="mi">9</span><span class="p">)</span> <span class="n">die</span><span class="p">(</span><span class="s">"Invalid number of arguments"</span><span class="p">);</span>
+
+<span class="n">codec_arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span>
+<span class="n">width_arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+<span class="n">height_arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">];</span>
+<span class="n">infile_arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">];</span>
+<span class="n">outfile_arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">5</span><span class="p">];</span>
+<span class="n">keyframe_interval_arg</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">6</span><span class="p">];</span>
+<span class="n">max_frames</span> <span class="o">=</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">strtol</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">8</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>After this, there is an attempt to instantiate the encoder, we’ll likely yoink this into our fuzzer.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">encoder</span> <span class="o">=</span> <span class="n">get_vpx_encoder_by_name</span><span class="p">(</span><span class="n">codec_arg</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">encoder</span><span class="p">)</span> <span class="n">die</span><span class="p">(</span><span class="s">"Unsupported codec."</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>On further investigation it seems like this is a sortof bloat-ish approach to get the encoder, by iterating over all of them and comparing names.</p>
+
+<p>Fuzzing really should be optimized for speed so we may, in the end, just hardwire the encoder much like the decoder example did.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">const</span> <span class="n">VpxInterface</span> <span class="o">*</span><span class="nf">get_vpx_encoder_by_name</span><span class="p">(</span><span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">)</span> <span class="p">{</span>
+<span class="kt">int</span> <span class="n">i</span><span class="p">;</span>
+
+<span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">get_vpx_encoder_count</span><span class="p">();</span> <span class="o">++</span><span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+<span class="k">const</span> <span class="n">VpxInterface</span> <span class="o">*</span><span class="n">encoder</span> <span class="o">=</span> <span class="n">get_vpx_encoder_by_index</span><span class="p">(</span><span class="n">i</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">strcmp</span><span class="p">(</span><span class="n">encoder</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="k">return</span> <span class="n">encoder</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>After this, there is this <code class="language-plaintext highlighter-rouge">VpxVideoInfo</code> set up with arguments from the encoder and from the input.</p>
+
+<p>it seems like a struct that holds parameters about the output video? I’m sure we’ll see this passed to some encoding function.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">info</span><span class="p">.</span><span class="n">codec_fourcc</span> <span class="o">=</span> <span class="n">encoder</span><span class="o">-&gt;</span><span class="n">fourcc</span><span class="p">;</span>
+<span class="n">info</span><span class="p">.</span><span class="n">frame_width</span> <span class="o">=</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">strtol</span><span class="p">(</span><span class="n">width_arg</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="n">info</span><span class="p">.</span><span class="n">frame_height</span> <span class="o">=</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">strtol</span><span class="p">(</span><span class="n">height_arg</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">numerator</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">denominator</span> <span class="o">=</span> <span class="n">fps</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="n">frame_width</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="o">||</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="o">||</span>
+  <span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="n">frame_width</span> <span class="o">%</span> <span class="mi">2</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">||</span> <span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="n">frame_height</span> <span class="o">%</span> <span class="mi">2</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">die</span><span class="p">(</span><span class="s">"Invalid frame size: %dx%d"</span><span class="p">,</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">,</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>Next we try to allocate memory for a single <code class="language-plaintext highlighter-rouge">vpx_image</code></p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">vpx_img_alloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">VPX_IMG_FMT_I420</span><span class="p">,</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">,</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="p">{</span>
+    <span class="n">die</span><span class="p">(</span><span class="s">"Failed to allocate image."</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>It might be interesting to see if <code class="language-plaintext highlighter-rouge">vpx_img_alloc</code> is just wrapping <code class="language-plaintext highlighter-rouge">malloc</code> or if it implements its own memory allocation process.</p>
+
+<p>Next we’ll set the minimum keyframe interval, the only requirement is that it is a positive number.</p>
+
+<p>The readme notes that keyframes may be placed more frequently regardless, if the encoding process requires that.</p>
+
+<p>Interesting that this is’nt stored in <code class="language-plaintext highlighter-rouge">VpxVideoInfo</code> but whatever, i guess its not the actual keyframe interval so its logical.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">keyframe_interval</span> <span class="o">=</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">strtol</span><span class="p">(</span><span class="n">keyframe_interval_arg</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">keyframe_interval</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="n">die</span><span class="p">(</span><span class="s">"Invalid keyframe interval value."</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Then we’ll inform the user about which codec he is using, any printf is gonna get cut from our final fuzzer.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">printf</span><span class="p">(</span><span class="s">"Using %s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">vpx_codec_iface_name</span><span class="p">(</span><span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">()));</span>
+</code></pre></div></div>
+
+<p>Then it gets the default codec config. <code class="language-plaintext highlighter-rouge">res</code> is just the error, <code class="language-plaintext highlighter-rouge">cfg</code> has the config in the end</p>
+
+<p>hopefully this can also be streamlined in the finished product</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">res</span> <span class="o">=</span> <span class="n">vpx_codec_enc_config_default</span><span class="p">(</span><span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">(),</span> <span class="o">&amp;</span><span class="n">cfg</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">res</span><span class="p">)</span> <span class="n">die_codec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to get default codec config."</span><span class="p">);</span>
+<span class="n">Then</span> <span class="n">cfg</span> <span class="n">gets</span> <span class="n">modified</span> <span class="n">by</span> <span class="n">our</span> <span class="n">arguments</span>
+<span class="n">cfg</span><span class="p">.</span><span class="n">g_w</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">;</span>
+<span class="n">cfg</span><span class="p">.</span><span class="n">g_h</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">;</span>
+<span class="n">cfg</span><span class="p">.</span><span class="n">g_timebase</span><span class="p">.</span><span class="n">num</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">numerator</span><span class="p">;</span>
+<span class="n">cfg</span><span class="p">.</span><span class="n">g_timebase</span><span class="p">.</span><span class="n">den</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">denominator</span><span class="p">;</span>
+<span class="n">cfg</span><span class="p">.</span><span class="n">rc_target_bitrate</span> <span class="o">=</span> <span class="n">bitrate</span><span class="p">;</span>
+<span class="n">cfg</span><span class="p">.</span><span class="n">g_error_resilient</span> <span class="o">=</span> <span class="p">(</span><span class="n">vpx_codec_er_flags_t</span><span class="p">)</span><span class="n">strtoul</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">7</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>Open the input and output files for wrting and reading, this will also be unnecessary</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">writer</span> <span class="o">=</span> <span class="n">vpx_video_writer_open</span><span class="p">(</span><span class="n">outfile_arg</span><span class="p">,</span> <span class="n">kContainerIVF</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">info</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">writer</span><span class="p">)</span> <span class="n">die</span><span class="p">(</span><span class="s">"Failed to open %s for writing."</span><span class="p">,</span> <span class="n">outfile_arg</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="n">infile</span> <span class="o">=</span> <span class="n">fopen</span><span class="p">(</span><span class="n">infile_arg</span><span class="p">,</span> <span class="s">"rb"</span><span class="p">)))</span>
+<span class="n">die</span><span class="p">(</span><span class="s">"Failed to open %s for reading."</span><span class="p">,</span> <span class="n">infile_arg</span><span class="p">);</span>
+<span class="n">Finally</span> <span class="n">initiate</span> <span class="n">the</span> <span class="o">****</span> <span class="n">codec</span>
+<span class="nf">if</span> <span class="p">(</span><span class="n">vpx_codec_enc_init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">(),</span> <span class="o">&amp;</span><span class="n">cfg</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+<span class="n">die</span><span class="p">(</span><span class="s">"Failed to initialize encoder"</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>Finally encode some <em>**</em> frames</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// Encode frames.</span>
+<span class="k">while</span> <span class="p">(</span><span class="n">vpx_img_read</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">infile</span><span class="p">))</span> <span class="p">{</span>
+  <span class="kt">int</span> <span class="n">flags</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">keyframe_interval</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">frame_count</span> <span class="o">%</span> <span class="n">keyframe_interval</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+  <span class="n">flags</span> <span class="o">|=</span> <span class="n">VPX_EFLAG_FORCE_KF</span><span class="p">;</span>
+  <span class="n">encode_frame</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">frame_count</span><span class="o">++</span><span class="p">,</span> <span class="n">flags</span><span class="p">,</span> <span class="n">writer</span><span class="p">);</span>
+  <span class="n">frames_encoded</span><span class="o">++</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">max_frames</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">frames_encoded</span> <span class="o">&gt;=</span> <span class="n">max_frames</span><span class="p">)</span> <span class="k">break</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="n">flush</span> <span class="n">the</span> <span class="n">encoder</span><span class="o">?</span> <span class="n">I</span> <span class="n">guess</span> <span class="n">it</span> <span class="n">will</span> <span class="n">push</span> <span class="n">the</span> <span class="n">last</span> <span class="n">frame</span> <span class="n">out</span> <span class="n">by</span> <span class="n">encoding</span> <span class="n">a</span> <span class="n">null</span> <span class="n">over</span> <span class="n">it</span>
+<span class="c1">// Flush encoder.</span>
+<span class="k">while</span> <span class="p">(</span><span class="n">encode_frame</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">writer</span><span class="p">))</span> <span class="p">{</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>bla bla bla</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="n">fclose</span><span class="p">(</span><span class="n">infile</span><span class="p">);</span>
+<span class="n">printf</span><span class="p">(</span><span class="s">"Processed %d frames.</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">frame_count</span><span class="p">);</span>
+<span class="n">Free</span> <span class="n">memory</span><span class="o">!</span> <span class="n">verrrryyy</span> <span class="n">important</span><span class="o">!</span> <span class="n">Always</span> <span class="n">free</span> <span class="n">memory</span><span class="o">!!!!</span>
+<span class="n">vpx_img_free</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">vpx_codec_destroy</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">))</span> <span class="n">die_codec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to destroy codec."</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>Okay so that seems pretty straightforward, now let’s extract the important parts only.</p>
+
+<p>So to create a fuzzer, I removed everything obviously unnecessary and replaced <code class="language-plaintext highlighter-rouge">main()</code> with <code class="language-plaintext highlighter-rouge">LLVMFuzzerTestOneInput()</code>.
+This function will be the entrypoint for our fuzzer, and should be implemented in every LibFuzzer harness.
+The two arguments are the fuzzing input <code class="language-plaintext highlighter-rouge">*data</code> and it’s size <code class="language-plaintext highlighter-rouge">size</code>.
+Therefore I modified calls so that they use the <code class="language-plaintext highlighter-rouge">*data</code> pointer instead of the infile.
+There could be many optimizations in a real fuzzer, but let’s see if we can even link this.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+</span>
+<span class="cp">#include "vpx/vpx_encoder.h"
+</span>
+<span class="cp">#include "../../libvpx/tools_common.h" //maybe unnecessary?
+#include "../../libvpx/video_common.h" //maybe unnecessary?
+</span>
+<span class="k">static</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">exec_name</span><span class="p">;</span>
+
+
+<span class="k">static</span> <span class="kt">void</span> <span class="nf">encode_frame</span><span class="p">(</span><span class="n">vpx_codec_ctx_t</span> <span class="o">*</span><span class="n">codec</span><span class="p">,</span> <span class="n">vpx_image_t</span> <span class="o">*</span><span class="n">img</span><span class="p">,</span>
+  <span class="kt">int</span> <span class="n">frame_index</span><span class="p">,</span> <span class="kt">int</span> <span class="n">flags</span><span class="p">)</span> <span class="p">{</span>
+
+    <span class="k">const</span> <span class="n">vpx_codec_err_t</span> <span class="n">res</span> <span class="o">=</span>
+    <span class="n">vpx_codec_encode</span><span class="p">(</span><span class="n">codec</span><span class="p">,</span> <span class="n">img</span><span class="p">,</span> <span class="n">frame_index</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="p">,</span> <span class="n">VPX_DL_GOOD_QUALITY</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">res</span> <span class="o">!=</span> <span class="n">VPX_CODEC_OK</span><span class="p">)</span> <span class="n">die_codec</span><span class="p">(</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to encode frame"</span><span class="p">);</span>
+
+    <span class="k">return</span><span class="p">;</span>
+  <span class="p">}</span>
+
+
+  <span class="k">extern</span> <span class="s">"C"</span> <span class="kt">int</span> <span class="nf">LLVMFuzzerTestOneInput</span><span class="p">(</span><span class="k">const</span> <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+
+
+    <span class="kt">FILE</span> <span class="o">*</span><span class="n">infile</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">//input file handle</span>
+    <span class="n">vpx_codec_ctx_t</span> <span class="n">codec</span><span class="p">;</span> <span class="c1">//thing that implements codec itnerface</span>
+    <span class="n">vpx_codec_enc_cfg_t</span> <span class="n">cfg</span><span class="p">;</span> <span class="c1">//config of the encoder</span>
+    <span class="kt">int</span> <span class="n">frame_count</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">vpx_image_t</span> <span class="n">raw</span><span class="p">;</span>
+    <span class="n">vpx_codec_err_t</span> <span class="n">res</span><span class="p">;</span>
+    <span class="n">VpxVideoInfo</span> <span class="n">info</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span> <span class="p">}</span> <span class="p">};</span>
+    <span class="k">const</span> <span class="n">VpxInterface</span> <span class="o">*</span><span class="n">encoder</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">// does this also implement a codec interface?</span>
+
+    <span class="c1">//output video parameters</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">fps</span> <span class="o">=</span> <span class="mi">30</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">width</span> <span class="o">=</span> <span class="mi">60</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">height</span> <span class="o">=</span> <span class="mi">60</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">bitrate</span> <span class="o">=</span> <span class="mi">200</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">min_keyframe_interval</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">max_frames</span> <span class="o">=</span> <span class="mi">10</span><span class="p">;</span> <span class="c1">//making more than 10 frames is redundant, max frames to create will terminate after done</span>
+    <span class="kt">int</span> <span class="n">frames_encoded</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">codec_arg</span> <span class="o">=</span> <span class="s">"vp8"</span><span class="p">;</span>
+    <span class="c1">//const char *codec_arg = "vp9";</span>
+
+
+    <span class="c1">//create encoder if it exists</span>
+    <span class="c1">// we could make all of this in a frist run function</span>
+    <span class="n">encoder</span> <span class="o">=</span> <span class="n">get_vpx_encoder_by_name</span><span class="p">(</span><span class="n">codec_arg</span><span class="p">);</span>
+    <span class="c1">//will become redundant, i just wanna see if it works</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">encoder</span><span class="p">)</span> <span class="n">die</span><span class="p">(</span><span class="s">"Unsupported codec."</span><span class="p">);</span>
+
+    <span class="c1">// set up vpxinfo</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">codec_fourcc</span> <span class="o">=</span> <span class="n">encoder</span><span class="o">-&gt;</span><span class="n">fourcc</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span> <span class="o">=</span> <span class="n">width</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span> <span class="o">=</span> <span class="n">height</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">numerator</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">denominator</span> <span class="o">=</span> <span class="n">fps</span><span class="p">;</span>
+
+    <span class="c1">// allocate space for a single image in memory</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">vpx_img_alloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">VPX_IMG_FMT_I420</span><span class="p">,</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">,</span>
+      <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="p">{</span>
+        <span class="n">die</span><span class="p">(</span><span class="s">"Failed to allocate image."</span><span class="p">);</span>
+      <span class="p">}</span>
+
+      <span class="c1">//gets the encoer config i guess its using the default one</span>
+      <span class="c1">//we might be able to hard create a config instead or make this only once</span>
+      <span class="n">res</span> <span class="o">=</span> <span class="n">vpx_codec_enc_config_default</span><span class="p">(</span><span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">(),</span> <span class="o">&amp;</span><span class="n">cfg</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">res</span><span class="p">)</span> <span class="n">die_codec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to get default codec config."</span><span class="p">);</span>
+
+      <span class="c1">// overwrite preferred attributes</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_w</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_h</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_timebase</span><span class="p">.</span><span class="n">num</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">numerator</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_timebase</span><span class="p">.</span><span class="n">den</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">denominator</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">rc_target_bitrate</span> <span class="o">=</span> <span class="n">bitrate</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_error_resilient</span> <span class="o">=</span> <span class="p">(</span><span class="n">vpx_codec_er_flags_t</span><span class="p">)</span><span class="n">strtoul</span><span class="p">(</span><span class="s">"1"</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+
+      <span class="k">if</span> <span class="p">(</span><span class="n">vpx_codec_enc_init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">(),</span> <span class="o">&amp;</span><span class="n">cfg</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+      <span class="n">die</span><span class="p">(</span><span class="s">"Failed to initialize encoder"</span><span class="p">);</span>
+
+      <span class="c1">// Encode frames.</span>
+
+      <span class="c1">// so this is really the thing we should do more than once</span>
+      <span class="k">while</span> <span class="p">(</span><span class="n">vpx_img_read</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">data</span><span class="p">))</span> <span class="p">{</span>
+
+        <span class="kt">int</span> <span class="n">flags</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">min_keyframe_interval</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">frame_count</span> <span class="o">%</span> <span class="n">min_keyframe_interval</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">flags</span> <span class="o">|=</span> <span class="n">VPX_EFLAG_FORCE_KF</span><span class="p">;</span>
+        <span class="n">encode_frame</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">frame_count</span><span class="o">++</span><span class="p">,</span> <span class="n">flags</span><span class="p">);</span>
+        <span class="n">frames_encoded</span><span class="o">++</span><span class="p">;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">max_frames</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">frames_encoded</span> <span class="o">&gt;=</span> <span class="n">max_frames</span><span class="p">)</span> <span class="k">break</span><span class="p">;</span>
+      <span class="p">}</span>
+
+      <span class="c1">// Flush encoder.</span>
+      <span class="n">encode_frame</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+
+      <span class="c1">//this may not need to be freed every iteration</span>
+      <span class="n">vpx_img_free</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">);</span>
+
+
+      <span class="c1">//codec may also be</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">vpx_codec_destroy</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">))</span> <span class="n">die_codec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to destroy codec."</span><span class="p">);</span>
+      <span class="c1">//vpx_video_writer_close(writer);</span>
+
+      <span class="k">return</span> <span class="n">EXIT_SUCCESS</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+
+<p>To try to link it this is my <del>first</del> 80th attempt:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -fsanitize=fuzzer,address -I../../libvpx -I../ -Wl,--start-group \
+../../libvpx/examples/vpx_enc_fuzzer.cc -o ./vpx_enc_fuzzer_vp8 \
+.\./libvpx.a -Wl,--end-group
+
+vpx_enc_fuzzer.cc:225:10: error: no matching function for call to 'vpx_img_read'
+while (vpx_img_read(&amp;raw, data)) {
+^~~~~~~~~~~~
+../../libvpx/./tools_common.h:151:5: note: candidate function not viable: no known conversion from 'const uint8_t *' (aka 'const unsigned char *') to 'FILE *' (aka '_IO_FILE *') for 2nd argument
+int vpx_img_read(vpx_image_t *img, FILE *file);
+^
+1 error generated.
+</code></pre></div></div>
+
+<p>So the <code class="language-plaintext highlighter-rouge">vpx_img_read</code> that reads the next frame from a <code class="language-plaintext highlighter-rouge">FILE *</code>, does not like to  get ` const uint8_t *` instead.</p>
+
+<p>So I either need to cast my fuzzing input to a <code class="language-plaintext highlighter-rouge">FILE *</code> handler, or I have to see what this function does and I need to modify it to work on <code class="language-plaintext highlighter-rouge">uint8_t *</code>.</p>
+
+<p>This is the function in question from tools common</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">vpx_img_read</span><span class="p">(</span><span class="n">vpx_image_t</span> <span class="o">*</span><span class="n">img</span><span class="p">,</span> <span class="kt">FILE</span><span class="o">*</span><span class="n">file</span><span class="p">)</span> <span class="p">{</span>
+<span class="kt">int</span> <span class="n">plane</span><span class="p">;</span>
+
+ <span class="k">for</span> <span class="p">(</span><span class="n">plane</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">plane</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="o">++</span><span class="n">plane</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kt">unsigned</span> <span class="kt">char</span> <span class="o">*</span><span class="n">buf</span> <span class="o">=</span> <span class="n">img</span><span class="o">-&gt;</span><span class="n">planes</span><span class="p">[</span><span class="n">plane</span><span class="p">];</span>
+  <span class="k">const</span> <span class="kt">int</span> <span class="n">stride</span> <span class="o">=</span> <span class="n">img</span><span class="o">-&gt;</span><span class="n">stride</span><span class="p">[</span><span class="n">plane</span><span class="p">];</span>
+  <span class="k">const</span> <span class="kt">int</span> <span class="n">w</span> <span class="o">=</span> <span class="n">vpx_img_plane_width</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">plane</span><span class="p">)</span> <span class="o">*</span>
+  <span class="p">((</span><span class="n">img</span><span class="o">-&gt;</span><span class="n">fmt</span> <span class="o">&amp;</span> <span class="n">VPX_IMG_FMT_HIGHBITDEPTH</span><span class="p">)</span> <span class="o">?</span> <span class="mi">2</span> <span class="o">:</span> <span class="mi">1</span><span class="p">);</span>
+  <span class="k">const</span> <span class="kt">int</span> <span class="n">h</span> <span class="o">=</span> <span class="n">vpx_img_plane_height</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">plane</span><span class="p">);</span>
+  <span class="kt">int</span> <span class="n">y</span><span class="p">;</span>
+
+  <span class="k">for</span> <span class="p">(</span><span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">h</span><span class="p">;</span> <span class="o">++</span><span class="n">y</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">fread</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span> <span class="o">!=</span> <span class="p">(</span><span class="kt">size_t</span><span class="p">)</span><span class="n">w</span><span class="p">)</span> <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">buf</span> <span class="o">+=</span> <span class="n">stride</span><span class="p">;</span>
+   <span class="p">}</span>
+  <span class="p">}</span>
+
+<span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>It’s doing a fair bit of stuff that I assume make more sense for someone who did a Phd on YV12, but I’m just gonna try to replace the <code class="language-plaintext highlighter-rouge">fread</code> call here, since that’s the only thing that uses the <code class="language-plaintext highlighter-rouge">FILE *</code>.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">vpx_img_read_from_fuzz</span><span class="p">(</span><span class="n">vpx_image_t</span> <span class="o">*</span><span class="n">img</span><span class="p">,</span> <span class="k">const</span> <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">file</span><span class="p">)</span> <span class="p">{</span>
+<span class="kt">int</span> <span class="n">plane</span><span class="p">;</span>
+
+<span class="k">for</span> <span class="p">(</span><span class="n">plane</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">plane</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="o">++</span><span class="n">plane</span><span class="p">)</span> <span class="p">{</span>
+ <span class="kt">unsigned</span> <span class="kt">char</span> <span class="o">*</span><span class="n">buf</span> <span class="o">=</span> <span class="n">img</span><span class="o">-&gt;</span><span class="n">planes</span><span class="p">[</span><span class="n">plane</span><span class="p">];</span>
+ <span class="k">const</span> <span class="kt">int</span> <span class="n">stride</span> <span class="o">=</span> <span class="n">img</span><span class="o">-&gt;</span><span class="n">stride</span><span class="p">[</span><span class="n">plane</span><span class="p">];</span>
+ <span class="k">const</span> <span class="kt">int</span> <span class="n">w</span> <span class="o">=</span> <span class="n">vpx_img_plane_width</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">plane</span><span class="p">)</span> <span class="o">*</span>
+ <span class="p">((</span><span class="n">img</span><span class="o">-&gt;</span><span class="n">fmt</span> <span class="o">&amp;</span> <span class="n">VPX_IMG_FMT_HIGHBITDEPTH</span><span class="p">)</span> <span class="o">?</span> <span class="mi">2</span> <span class="o">:</span> <span class="mi">1</span><span class="p">);</span>
+ <span class="k">const</span> <span class="kt">int</span> <span class="n">h</span> <span class="o">=</span> <span class="n">vpx_img_plane_height</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">plane</span><span class="p">);</span>
+ <span class="kt">int</span> <span class="n">y</span><span class="p">;</span>
+
+ <span class="k">for</span> <span class="p">(</span><span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">h</span><span class="p">;</span> <span class="o">++</span><span class="n">y</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">//if (fread(buf, 1, w, file) != (size_t)w) return 0;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="n">file</span><span class="p">)</span> <span class="o">&lt;</span> <span class="p">(</span><span class="kt">size_t</span><span class="p">)</span><span class="n">w</span><span class="p">)</span> <span class="k">return</span> <span class="mi">0</span><span class="p">;</span> <span class="c1">//if we can't read enough, don't try</span>
+   <span class="n">memcpy</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">file</span><span class="p">,</span> <span class="n">w</span><span class="p">);</span> <span class="c1">//do fread but from memory</span>
+   <span class="n">file</span> <span class="o">+=</span> <span class="n">w</span><span class="p">;</span> <span class="c1">//shift the pointer in the array to simulate a stream</span>
+
+   <span class="n">buf</span> <span class="o">+=</span> <span class="n">stride</span><span class="p">;</span>
+  <span class="p">}</span>
+ <span class="p">}</span>
+
+<span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>I ended up replacing the <code class="language-plaintext highlighter-rouge">fread</code> with <code class="language-plaintext highlighter-rouge">memcpy</code> there are functions like <code class="language-plaintext highlighter-rouge">fmemopen</code> but I want to open as few streams as possible.</p>
+
+<p>This is because there is a kernel limit on open filestreams and running the fuzzer in parallel may be limited if too many filestreams are open.</p>
+
+<p>Now it finally compiles, but it doesn’t link correctly:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -fsanitize=fuzzer,address -I../../libvpx -I../ -Wl,--start-group \
+../../libvpx/examples/vpx_enc_fuzzer.cc -o ./vpx_enc_fuzzer_vp8 \
+.\./libvpx.a -Wl,--end-group
+
+
+/usr/bin/ld: /tmp/vpx_enc_fuzzer-bb9c27.o: in function `vpx_img_read_from_fuzz(vpx_image*, unsigned char const*)':
+vpx_enc_fuzzer.cc:(.text._Z22vpx_img_read_from_fuzzP9vpx_imagePKh[_Z22vpx_img_read_from_fuzzP9vpx_imagePKh]+0x12c): undefined reference to `vpx_img_plane_width'
+/usr/bin/ld: vpx_enc_fuzzer.cc:(.text._Z22vpx_img_read_from_fuzzP9vpx_imagePKh[_Z22vpx_img_read_from_fuzzP9vpx_imagePKh]+0x1c3): undefined reference to `vpx_img_plane_height'
+/usr/bin/ld: /tmp/vpx_enc_fuzzer-bb9c27.o: in function `LLVMFuzzerTestOneInput':
+vpx_enc_fuzzer.cc:(.text.LLVMFuzzerTestOneInput[LLVMFuzzerTestOneInput]+0x31b): undefined reference to `get_vpx_encoder_by_name'
+/usr/bin/ld: vpx_enc_fuzzer.cc:(.text.LLVMFuzzerTestOneInput[LLVMFuzzerTestOneInput]+0x351): undefined reference to `die'
+/usr/bin/ld: vpx_enc_fuzzer.cc:(.text.LLVMFuzzerTestOneInput[LLVMFuzzerTestOneInput]+0x6f5): undefined reference to `die'
+/usr/bin/ld: vpx_enc_fuzzer.cc:(.text.LLVMFuzzerTestOneInput[LLVMFuzzerTestOneInput]+0x7ac): undefined reference to `die_codec'
+/usr/bin/ld: vpx_enc_fuzzer.cc:(.text.LLVMFuzzerTestOneInput[LLVMFuzzerTestOneInput]+0xc85): undefined reference to `die'
+/usr/bin/ld: vpx_enc_fuzzer.cc:(.text.LLVMFuzzerTestOneInput[LLVMFuzzerTestOneInput]+0xeec): undefined reference to `die_codec'
+/usr/bin/ld: /tmp/vpx_enc_fuzzer-bb9c27.o: in function `encode_frame(vpx_codec_ctx*, vpx_image*, int, int)':
+vpx_enc_fuzzer.cc:(.text._ZL12encode_frameP13vpx_codec_ctxP9vpx_imageii[_ZL12encode_frameP13vpx_codec_ctxP9vpx_imageii$6c121d6a4c153a11e7afe7c7ed6b17be]+0xd8): undefined reference to `die_codec'
+clang-10: error: linker command failed with exit code 1 (use -v to see invocation)
+</code></pre></div></div>
+
+<p>So it seems to be missing a few die/die_codec commands and some stuff that should be in tools_common. Let’s see where these are defined and how we can link them here. Linking the tools_common object however, opens up new problems.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -fsanitize=fuzzer,address -I../../libvpx -I../ -I. -Wl,--start-group \
+../../libvpx/examples/vpx_enc_fuzzer.cc -o ./vpx_enc_fuzzer_vp8 \
+../libvpx.a ../tools_common.c.o -Wl,--end-group
+
+/usr/bin/ld: ../tools_common.c.o: in function `die':
+tools_common.c:(.text+0x17b): undefined reference to `usage_exit'
+/usr/bin/ld: ../tools_common.c.o: in function `read_frame':
+tools_common.c:(.text.read_frame[read_frame]+0x7a): undefined reference to `y4m_input_fetch_frame'
+/usr/bin/ld: ../tools_common.c.o: in function `open_input_file':
+tools_common.c:(.text.open_input_file[open_input_file]+0x2d3): undefined reference to `y4m_input_open'
+/usr/bin/ld: ../tools_common.c.o: in function `close_input_file':
+tools_common.c:(.text.close_input_file[close_input_file]+0x7a): undefined reference to `y4m_input_close'
+clang-10: error: linker command failed with exit code 1 (use -v to see invocation)
+</code></pre></div></div>
+
+<p>After adding a <code class="language-plaintext highlighter-rouge">y4input</code> object the linker seems to be somewhat appeased. It seems that usage exit is just something you have to implement if you want to <code class="language-plaintext highlighter-rouge">die</code>.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -fsanitize=fuzzer,address -I../../libvpx -I../ -I. -Wl,--start-group \
+../../libvpx/examples/vpx_enc_fuzzer.cc -o ./vpx_enc_fuzzer_vp8 \
+../libvpx.a ../tools_common.c.o ../y4minput.c.o -Wl,--end-group
+/usr/bin/ld: ../tools_common.c.o: in function `die':
+tools_common.c:(.text+0x17b): undefined reference to `usage_exit'
+clang-10: error: linker command failed with exit code 1 (use -v to see invocation)
+</code></pre></div></div>
+<p>So that’s what I did:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>void usage_exit(void) {
+  exit(EXIT_FAILURE);
+}
+</code></pre></div></div>
+
+<p>And viola, we have a “working” fuzzer:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%examples clang++ -fsanitize=fuzzer,address -I../../libvpx -I../ -I. -Wl,--start-group \
+../../libvpx/examples/vpx_enc_fuzzer.cc -o ./vpx_enc_fuzzer_vp8 \
+../libvpx.a ../tools_common.c.o ../y4minput.c.o -Wl,--end-group
+
+
+%examples ./vpx_enc_fuzzer_vp8
+INFO: Seed: 3103525224
+INFO: Loaded 1 modules (37441 inline 8-bit counters): 37441 [0x5622279e4030, 0x5622279ed271),
+INFO: Loaded 1 PC tables (37441 PCs): 37441 [0x5622279ed278,0x562227a7f688),
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2 INITED cov: 282 ft: 283 corp: 1/1b exec/s: 0 rss: 35Mb
+^C==286085== libFuzzer: run interrupted; exiting
+</code></pre></div></div>
+
+<p>The thing is, our coverage is pretty much stuck on 282. Now some might say that 282 is a lot, however in this case, we instrumented the fuzzing harness/ fuzz-target itself, so that 282 is likely just the very basic run of our harness. This means that something is not right, and there is actually a bug in my fuzzing harness. To see what it is, let’s create a coverage build.</p>
+
+<h2 id="5-create-a-suitable-seed-corpus--grammar"><del>5. Create a suitable seed corpus (+ grammar)</del></h2>
+<h2 id="7-check-coverage-and-adjust-the-seed">7. Check coverage and adjust the seed</h2>
+
+<p>To see what our fuzzer covers, we need to instrument the binaries for coverage calculation.</p>
+
+<p>LLVM provides the <code class="language-plaintext highlighter-rouge">-fcoverage-mapping</code> switch to do this</p>
+
+<p>We can also add a few other flags to make the binary more verbose</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>-O1 -fno-omit-frame-pointer -g -ggdb3 -fprofile-instr-generate -fcoverage-mapping
+</code></pre></div></div>
+
+<p>Let’s rebuild the entire library like this to be sure we cover correctly.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CC=clang CXX=clang++ LD=clang++ \
+../libvpx/configure \
+--extra-cflags="-O1 -fno-omit-frame-pointer -g -ggdb3 -fprofile-instr-generate -fcoverage-mapping \
+-DVPX_MAX_ALLOCABLE_MEMORY=1073741824" \
+--extra-cxxflags="-O1 -fno-omit-frame-pointer -g -ggdb3 -fprofile-instr-generate -fcoverage-mapping \
+-DVPX_MAX_ALLOCABLE_MEMORY=1073741824" \
+--enable-debug \
+--disable-vp8-decoder \
+--disable-vp9-decoder \
+--disable-webm-io \
+--disable-unit-tests
+</code></pre></div></div>
+
+<p>Then let’s rebuild the fuzzer with coverage enabled, I added <code class="language-plaintext highlighter-rouge">-lpthread</code> as it was crying about it.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -fprofile-instr-generate -fcoverage-mapping \
+-fsanitize=fuzzer \
+-I../../libvpx -I../ -I. -Wl,--start-group \
+../../libvpx/examples/vpx_enc_fuzzer.cc -o ./vpx_enc_fuzzer_vp8_cov \
+../libvpx.a ../tools_common.c.o ../y4minput.c.o -Wl,--end-group \
+-lpthread
+</code></pre></div></div>
+<p>So will this work? Let’s try to use it on the fuzzing entry point <code class="language-plaintext highlighter-rouge">LLVMFuzzerTestOneInput</code></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./vpx_enc_fuzzer_vp8_cov ../../llvmbuilt/fuzz/corpus/* &amp;&amp; \
+llvm-profdata merge -sparse *.profraw -o default.profdata &amp;&amp; \
+llvm-cov show ./vpx_enc_fuzzer_vp8_cov -instr-profile=default.profdata -name=LLVMFuzzerTestOneInput
+</code></pre></div></div>
+
+<p>Sample from the output:</p>
+
+<p><img src="/img/libvpxfuzz/1.png" alt="coverage1" /></p>
+
+<p>So it does look like it’s working What’s more we are avoiding all of the code paths that invoke <code class="language-plaintext highlighter-rouge">die_codec</code> so that’s a good thing</p>
+
+<p>What isn’t such a good thing is that we are also avoiding the code path for literally the whole point of this entire thing:</p>
+
+<p><img src="/img/libvpxfuzz/2.png" alt="coverage2" /></p>
+
+<p>So this would explain the static coverage, our input does absolutely nothing as it’s never used.
+Let’s see our modified read function that always fails here in the “while”</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./vpx_enc_fuzzer_vp8_cov ../../llvmbuilt/fuzz/corpus/* &amp;&amp; \
+llvm-profdata merge -sparse *.profraw -o default.profdata &amp;&amp; \
+llvm-cov show ./vpx_enc_fuzzer_vp8_cov -instr-profile=default.profdata -name=vpx_img_read_from_fuzz
+</code></pre></div></div>
+
+<p><img src="/img/libvpxfuzz/3.png" alt="coverage3" /></p>
+
+<p>I guess that comparison doesn’t really work as I intended it to work. Let’s try a quick fix:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+</span>
+<span class="cp">#include "vpx/vpx_encoder.h"
+</span>
+<span class="cp">#include "../../libvpx/tools_common.h" //maybe unnecessary?
+#include "../../libvpx/video_common.h" //maybe unnecessary?
+</span>
+<span class="c1">//#include "../video_writer.h" unnecesary as we do not write anything</span>
+
+<span class="kt">void</span> <span class="nf">usage_exit</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+
+  <span class="n">exit</span><span class="p">(</span><span class="n">EXIT_FAILURE</span><span class="p">);</span>
+
+<span class="p">}</span>
+
+
+<span class="kt">int</span> <span class="nf">vpx_img_read_from_fuzz</span><span class="p">(</span><span class="n">vpx_image_t</span> <span class="o">*</span><span class="n">img</span><span class="p">,</span> <span class="k">const</span> <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">file</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">,</span> <span class="kt">int</span> <span class="o">*</span><span class="n">readoffset</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kt">int</span> <span class="n">plane</span><span class="p">;</span>
+
+  <span class="k">for</span> <span class="p">(</span><span class="n">plane</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">plane</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="o">++</span><span class="n">plane</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">unsigned</span> <span class="kt">char</span> <span class="o">*</span><span class="n">buf</span> <span class="o">=</span> <span class="n">img</span><span class="o">-&gt;</span><span class="n">planes</span><span class="p">[</span><span class="n">plane</span><span class="p">];</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">stride</span> <span class="o">=</span> <span class="n">img</span><span class="o">-&gt;</span><span class="n">stride</span><span class="p">[</span><span class="n">plane</span><span class="p">];</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">w</span> <span class="o">=</span> <span class="n">vpx_img_plane_width</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">plane</span><span class="p">)</span> <span class="o">*</span>
+    <span class="p">((</span><span class="n">img</span><span class="o">-&gt;</span><span class="n">fmt</span> <span class="o">&amp;</span> <span class="n">VPX_IMG_FMT_HIGHBITDEPTH</span><span class="p">)</span> <span class="o">?</span> <span class="mi">2</span> <span class="o">:</span> <span class="mi">1</span><span class="p">);</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">h</span> <span class="o">=</span> <span class="n">vpx_img_plane_height</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">plane</span><span class="p">);</span>
+    <span class="kt">int</span> <span class="n">y</span><span class="p">;</span>
+
+    <span class="k">for</span> <span class="p">(</span><span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">h</span><span class="p">;</span> <span class="o">++</span><span class="n">y</span><span class="p">)</span> <span class="p">{</span>
+      <span class="c1">//if (fread(buf, 1, w, file) != (size_t)w) return 0;</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">size</span> <span class="o">&lt;</span> <span class="p">(</span><span class="kt">size_t</span><span class="p">)(</span><span class="n">w</span><span class="o">+*</span><span class="n">readoffset</span><span class="p">))</span> <span class="k">return</span> <span class="mi">0</span><span class="p">;</span> <span class="c1">//if we cant read enough, dont try</span>
+      <span class="n">memcpy</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">file</span><span class="o">+*</span><span class="n">readoffset</span><span class="p">,</span> <span class="n">w</span><span class="p">);</span> <span class="c1">//do fread but from memory</span>
+      <span class="o">*</span><span class="n">readoffset</span> <span class="o">+=</span> <span class="n">w</span><span class="p">;</span> <span class="c1">//shift the pointer in the array to simulate a stream</span>
+
+      <span class="n">buf</span> <span class="o">+=</span> <span class="n">stride</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+
+  <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">static</span> <span class="kt">void</span> <span class="nf">encode_frame</span><span class="p">(</span><span class="n">vpx_codec_ctx_t</span> <span class="o">*</span><span class="n">codec</span><span class="p">,</span> <span class="n">vpx_image_t</span> <span class="o">*</span><span class="n">img</span><span class="p">,</span>
+  <span class="kt">int</span> <span class="n">frame_index</span><span class="p">,</span> <span class="kt">int</span> <span class="n">flags</span><span class="p">)</span> <span class="p">{</span>
+    <span class="c1">// int got_pkts = 0;</span>
+    <span class="c1">// vpx_codec_iter_t iter = NULL;</span>
+    <span class="c1">// const vpx_codec_cx_pkt_t *pkt = NULL;</span>
+    <span class="k">const</span> <span class="n">vpx_codec_err_t</span> <span class="n">res</span> <span class="o">=</span>
+    <span class="n">vpx_codec_encode</span><span class="p">(</span><span class="n">codec</span><span class="p">,</span> <span class="n">img</span><span class="p">,</span> <span class="n">frame_index</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="p">,</span> <span class="n">VPX_DL_GOOD_QUALITY</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">res</span> <span class="o">!=</span> <span class="n">VPX_CODEC_OK</span><span class="p">)</span> <span class="n">die_codec</span><span class="p">(</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to encode frame"</span><span class="p">);</span>
+
+    <span class="k">return</span><span class="p">;</span>
+  <span class="p">}</span>
+
+  <span class="c1">// TODO(tomfinegan): Improve command line parsing and add args for bitrate/fps.</span>
+  <span class="c1">//int main(int argc, char **argv) {</span>
+  <span class="k">extern</span> <span class="s">"C"</span> <span class="kt">int</span> <span class="nf">LLVMFuzzerTestOneInput</span><span class="p">(</span><span class="k">const</span> <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+
+    <span class="kt">int</span> <span class="n">readoffset</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">FILE</span> <span class="o">*</span><span class="n">infile</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">//input file handle</span>
+    <span class="n">vpx_codec_ctx_t</span> <span class="n">codec</span><span class="p">;</span> <span class="c1">//thing that implements codec itnerface</span>
+    <span class="n">vpx_codec_enc_cfg_t</span> <span class="n">cfg</span><span class="p">;</span> <span class="c1">//config of the encoder</span>
+    <span class="kt">int</span> <span class="n">frame_count</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">vpx_image_t</span> <span class="n">raw</span><span class="p">;</span>
+    <span class="n">vpx_codec_err_t</span> <span class="n">res</span><span class="p">;</span>
+    <span class="n">VpxVideoInfo</span> <span class="n">info</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span> <span class="p">}</span> <span class="p">};</span>
+
+    <span class="c1">// VpxVideoWriter *writer = NULL; //likely the thing that assambles the output frames into a video</span>
+    <span class="k">const</span> <span class="n">VpxInterface</span> <span class="o">*</span><span class="n">encoder</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> <span class="c1">// does this also implement a codec interface?</span>
+
+    <span class="c1">//output video parameters</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">fps</span> <span class="o">=</span> <span class="mi">30</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">width</span> <span class="o">=</span> <span class="mi">60</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">height</span> <span class="o">=</span> <span class="mi">60</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">int</span> <span class="n">bitrate</span> <span class="o">=</span> <span class="mi">200</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">min_keyframe_interval</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">max_frames</span> <span class="o">=</span> <span class="mi">10</span><span class="p">;</span> <span class="c1">//making more than 10 frames is redundant, max frames to create will terminate after done</span>
+    <span class="kt">int</span> <span class="n">frames_encoded</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">codec_arg</span> <span class="o">=</span> <span class="s">"vp8"</span><span class="p">;</span>
+    <span class="c1">//const char *codec_arg = "vp9";</span>
+
+
+    <span class="c1">//create encoder if it exists</span>
+    <span class="c1">// we could make all of this in a frist run function</span>
+    <span class="n">encoder</span> <span class="o">=</span> <span class="n">get_vpx_encoder_by_name</span><span class="p">(</span><span class="n">codec_arg</span><span class="p">);</span>
+    <span class="c1">//will become redundant, i just wanna see if it works</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">encoder</span><span class="p">)</span> <span class="n">die</span><span class="p">(</span><span class="s">"Unsupported codec."</span><span class="p">);</span>
+
+    <span class="c1">// set up vpxinfo</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">codec_fourcc</span> <span class="o">=</span> <span class="n">encoder</span><span class="o">-&gt;</span><span class="n">fourcc</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span> <span class="o">=</span> <span class="n">width</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span> <span class="o">=</span> <span class="n">height</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">numerator</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+    <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">denominator</span> <span class="o">=</span> <span class="n">fps</span><span class="p">;</span>
+
+    <span class="c1">// allocate space for a single image in memory</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">vpx_img_alloc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">VPX_IMG_FMT_I420</span><span class="p">,</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">,</span>
+      <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="p">{</span>
+        <span class="n">die</span><span class="p">(</span><span class="s">"Failed to allocate image."</span><span class="p">);</span>
+      <span class="p">}</span>
+
+      <span class="c1">//gets the encoer config i guess its using the default one</span>
+      <span class="c1">//we might be able to hard create a config instead or make this only once</span>
+      <span class="n">res</span> <span class="o">=</span> <span class="n">vpx_codec_enc_config_default</span><span class="p">(</span><span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">(),</span> <span class="o">&amp;</span><span class="n">cfg</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">res</span><span class="p">)</span> <span class="n">die_codec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to get default codec config."</span><span class="p">);</span>
+
+      <span class="c1">// overwrite preferred attributes</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_w</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_width</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_h</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">frame_height</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_timebase</span><span class="p">.</span><span class="n">num</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">numerator</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_timebase</span><span class="p">.</span><span class="n">den</span> <span class="o">=</span> <span class="n">info</span><span class="p">.</span><span class="n">time_base</span><span class="p">.</span><span class="n">denominator</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">rc_target_bitrate</span> <span class="o">=</span> <span class="n">bitrate</span><span class="p">;</span>
+      <span class="n">cfg</span><span class="p">.</span><span class="n">g_error_resilient</span> <span class="o">=</span> <span class="p">(</span><span class="n">vpx_codec_er_flags_t</span><span class="p">)</span><span class="n">strtoul</span><span class="p">(</span><span class="s">"1"</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+
+      <span class="k">if</span> <span class="p">(</span><span class="n">vpx_codec_enc_init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="n">encoder</span><span class="o">-&gt;</span><span class="n">codec_interface</span><span class="p">(),</span> <span class="o">&amp;</span><span class="n">cfg</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+      <span class="n">die</span><span class="p">(</span><span class="s">"Failed to initialize encoder"</span><span class="p">);</span>
+
+      <span class="c1">// Encode frames.</span>
+      <span class="c1">//while (vpx_img_read(&amp;raw, infile)) {</span>
+        <span class="c1">// so this is really the thing we should do more than once</span>
+        <span class="k">while</span> <span class="p">(</span><span class="n">vpx_img_read_from_fuzz</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">readoffset</span><span class="p">))</span> <span class="p">{</span>
+
+          <span class="kt">int</span> <span class="n">flags</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">min_keyframe_interval</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">frame_count</span> <span class="o">%</span> <span class="n">min_keyframe_interval</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// make every other frame a keyframe</span>
+          <span class="n">flags</span> <span class="o">|=</span> <span class="n">VPX_EFLAG_FORCE_KF</span><span class="p">;</span>
+          <span class="n">encode_frame</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">raw</span><span class="p">,</span> <span class="n">frame_count</span><span class="o">++</span><span class="p">,</span> <span class="n">flags</span><span class="p">);</span>
+          <span class="n">frames_encoded</span><span class="o">++</span><span class="p">;</span>
+          <span class="k">if</span> <span class="p">(</span><span class="n">max_frames</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">frames_encoded</span> <span class="o">&gt;=</span> <span class="n">max_frames</span><span class="p">)</span> <span class="k">break</span><span class="p">;</span>
+        <span class="p">}</span>
+
+        <span class="c1">// Flush encoder.</span>
+        <span class="n">encode_frame</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+
+        <span class="c1">//this may not need to be freed every iteration</span>
+        <span class="n">vpx_img_free</span><span class="p">(</span><span class="o">&amp;</span><span class="n">raw</span><span class="p">);</span>
+
+
+        <span class="c1">//codec may also be</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">vpx_codec_destroy</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">))</span> <span class="n">die_codec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">codec</span><span class="p">,</span> <span class="s">"Failed to destroy codec."</span><span class="p">);</span>
+        <span class="c1">//vpx_video_writer_close(writer);</span>
+
+        <span class="k">return</span> <span class="n">EXIT_SUCCESS</span><span class="p">;</span>
+      <span class="p">}</span>
+</code></pre></div></div>
+
+<p>And now we broke through the 282 barrier:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./vpx_enc_fuzzer_vp8 corpus
+INFO: Seed: 2027026999
+INFO: Loaded 1 modules (37441 inline 8-bit counters): 37441 [0x55df7ec16030, 0x55df7ec1f271),
+INFO: Loaded 1 PC tables (37441 PCs): 37441 [0x55df7ec1f278,0x55df7ecb1688),
+INFO: 8 files found in corpus
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: seed corpus: files: 8 min: 1b max: 25b total: 84b rss: 34Mb
+#9 INITED cov: 282 ft: 283 corp: 1/1b exec/s: 0 rss: 39Mb
+#5979 NEW cov: 283 ft: 284 corp: 2/64b lim: 63 exec/s: 2989 rss: 261Mb L: 63/63 MS: 5 ShuffleBytes-InsertByte-ChangeASCIIInt-ChangeBit-CrossOver-
+#6021 REDUCE cov: 283 ft: 284 corp: 2/63b lim: 63 exec/s: 3010 rss: 261Mb L: 62/62 MS: 2 ShuffleBytes-EraseBytes-
+</code></pre></div></div>
+<p>Let’s see the coverage on this, 283 is still not a whole lot.</p>
+
+<p><img src="/img/libvpxfuzz/4.png" alt="coverage4" /></p>
+
+<p>That looks… better I guess, although I don’t really understand how we managed to hit return 1 both 0  and 15 times. I guess we hit the semicolon 15 times but not the rest of the statement? :D</p>
+
+<p>The real problem is that we are still just fuzzing our own binary for instead of the target lib:</p>
+
+<p><img src="/img/libvpxfuzz/5.png" alt="coverage5" /></p>
+
+<p>So apparently, the pproblem was that i didnt have an input file large enough.</p>
+
+<p>After adding a somewhat larger input file, the coverage expanded significantly, I think my inputs simply were smaller than a standard frame so nothing was ever read from them.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%fuzz ./vpx_enc_fuzzer_vp8 corpus
+INFO: Seed: 3496353863
+INFO: Loaded 1 modules (37441 inline 8-bit counters): 37441 [0x560e21901030, 0x560e2190a271),
+INFO: Loaded 1 PC tables (37441 PCs): 37441 [0x560e2190a278,0x560e2199c688),
+INFO: 16 files found in corpus
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 14418 bytes
+INFO: seed corpus: files: 16 min: 1b max: 14418b total: 22060b rss: 34Mb
+#17 INITED cov: 1890 ft: 1963 corp: 10/21Kb exec/s: 0 rss: 44Mb
+NEW_FUNC[1/5]: 0x560e21299bb0 in vp8_quantize_mby (/home/dna/git/libvpx/llvmbuilt/fuzz/vpx_enc_fuzzer_vp8+0x2a6bb0)
+NEW_FUNC[2/5]: 0x560e2156f610 in vp8_encode_intra16x16mby (/home/dna/git/libvpx/llvmbuilt/fuzz/vpx_enc_fuzzer_vp8+0x57c610)
+#24 NEW cov: 1960 ft: 2453 corp: 11/35Kb lim: 14418 exec/s: 0 rss: 49Mb L: 14418/14418 MS: 2 CopyPart-CrossOver-
+</code></pre></div></div>
+<p>On that bombshell, let’s get back to our regular programming:</p>
+
+<h2 id="5-create-a-suitable-seed-corpus--grammar-1">5. Create a suitable seed corpus (+ grammar)</h2>
+<p>The best seed is usually a small sample of valid inputs. The problem with YV12 is that there simply aren’t many exapmle files I could use as it’s an intermediary raw format that gets compressed by wrappers such as mp4 etc. So finding a raw YV12 video is just not very easy.</p>
+
+<p>From the readme:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>VP8/VP9 TEST VECTORS: The test vectors can be downloaded and verified using the build system after running configure. To specify an alternate directory the LIBVPX_TEST_DATA_PATH environment variable can be used. $ ./configure --enable-unit-tests $ LIBVPX_TEST_DATA_PATH=../libvpx-test-data make testdata
+</code></pre></div></div>
+
+<p>But we’ll need YV12 files to seed the encoder</p>
+
+<p>https://wiki.videolan.org/YUV#YUV_4:2:0_.28I420.2FJ420.2FYV12.29</p>
+
+<p>Something similar would also probably suffice like j420 etc</p>
+
+<p>Because nobody actually uses these formats in raw, they are kinda hard to come by.
+I guesssss we could try to make our own file based on the description if worst comes to worst.</p>
+
+<p>I found this, idk if this is even what i need:</p>
+
+<p>http://trace.eas.asu.edu/yuv/</p>
+
+<p>added a .yuv from here cut to 4000 bytes and it seems to have done the trick</p>
+
+<p>after this generate 1368 possible inputs, I’ve decided to merge them :</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./vpx_enc_fuzzer_vp8 merged corpus -merge=1
+</code></pre></div></div>
+<p>You may also want to set up a grammar for your seed, with libprotobuf but that’s out of the scope of this blogpost, it’s already waaaay too long.
+Anyway just do your best with this part… it’s important :D</p>
+
+<h2 id="6-the-machine-turns-the-creator-rests">6. The machine turns, the creator rests</h2>
+<p>So realistically you would run this on something with a lot of CPU cores and memory and wait a bit. How long? A day, a week, a month, however long you have. The hard part really comes when something does actually crash, you’ll need to find out how and why it happened, and then you’ll have to exploit it. While you wait feel free to check your coverage to see if the fuzzer got stuck on something, and maybe you can provide an input that passes that specific check. You may also start to fuzz other function calls in the library.</p>
+:ET

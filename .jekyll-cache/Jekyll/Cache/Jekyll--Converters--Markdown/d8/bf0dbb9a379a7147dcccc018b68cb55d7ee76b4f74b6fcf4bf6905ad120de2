@@ -1,0 +1,32 @@
+I"A<h1 id="remote-control-for-ios-devices-from-a-linux-desktop">Remote control for iOS devices from a Linux desktop</h1>
+<p>Aka <a href="https://github.com/Genymobile/scrcpy">scrcpy</a> but for <a href="https://i.imgur.com/0yTw52P.jpg">iOS</a> and from Linux.</p>
+
+<p>Since <a href="https://www.urbandictionary.com/define.php?term=Clown%20World">“Apple is the only platform compatible with everything”</a> controlling it from <a href="https://github.com/OverMighty/i-use-arch-btw">linux</a> can be <a href="https://youtu.be/fPNdWnwuBDI?t=10">quite a challenge</a>.
+Thanks to some <a href="https://ell.stackexchange.com/questions/30805/is-it-correct-to-say-a-program-is-buggy">new</a> projects, it is now possible. By combining <a href="https://pypi.org/project/python-libxdo/">xdotool</a>, <a href="https://github.com/antimof/UxPlay">UxPlay</a> and <a href="https://github.com/xuan32546/IOS13-SimulateTouch">zxtouch</a> you can view and control your <a href="https://stallman.org/saintignucius.jpg">Jailbroken</a> <a href="https://en.wikipedia.org/wiki/Scam_(disambiguation)">iOS device</a> from a Linux desktop over the <a href="https://en.wikipedia.org/wiki/Series_of_tubes">network</a>.</p>
+
+<h2 id="zxtouch">zxtouch</h2>
+<p>This is responsible for simulating <a href="https://www.youtube.com/watch?v=cUqCv_1kGzM">touch</a> events on the device based on network calls.
+You can install this from cydia by adding the repo:<br />
+<a href="https://zxtouch.net">https://zxtouch.net</a><br />
+And then installing the zxtouch <a href="https://news.artnet.com/app/news-upload/2015/10/south-park-yaoi-4.jpg">app</a><br />
+It will start listening on port :6000 after installation.</p>
+
+<h2 id="uxplay">UxPlay</h2>
+<p>This allows you to see your <a href="https://www.theonion.com/report-90-of-waking-hours-spent-staring-at-glowing-re-1819570829">device’s screen</a> on your linux desktop via apple’s screen mirroring.
+Install <a href="https://github.com/antimof/UxPlay">UxPlay</a> on your desktop.
+Try running it, it will throw some avahi warnings, <a href="https://youtu.be/DstWZY_eUOc?t=74">just ignore that</a>.
+Your phone will likely not see it right away or will not be able to connect to it.
+When this happens run:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo systemctl stop systemd-resolved.service
+sudo systemctl restart avahi-daemon.service
+</code></pre></div></div>
+<p>honestly not sure if the first one is necessary.</p>
+
+<h2 id="scrgto">scrgto</h2>
+<p>Once both of these are installed, here’s a script to connect them.
+You want the clicks on your UxPlay mirrored screen to be translated into API calls for zxtouch.
+Enter <a href="https://github.com/f-viktor/ghetto-scrcpy-iOS">scrgto</a>
+It uses xdotool to register your clicks on the window and send them to the iOS device.
+To use it, install python-libxdo. And then just run the script.
+It will first ask you to click on the window where your mirrored screen is, then if the connection is successful, any subsequent clicks are sent to the <a href="https://www.youtube.com/watch?v=IGL_gBXhhCU">phone</a>.</p>
+:ET
