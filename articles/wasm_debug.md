@@ -25,6 +25,15 @@ You can open the memory inspector, if you find a variable in scope, that is actu
 
 "But wait!" - I hear you say - "All of this only works with .c files? I thought you can make WASM binaries from golang, Rust and other languages too!". Well yes, however those languages are memory safe, so there's not much of a point in trying to exploit them. This, of course, also means, that your hacking options are reduced to only a small section of what is already a very niche software stack.
 
+As an added bit of complexity, this debugging tool fails to resolve variable names if the source-map is hosted on the webserver (i.e.: this CTF), instead of the local filesystem. You can bypass this problem by either downloading the source files and recompiling them locally with the -g option, which is a hassle. Alternatively you can use the variables as they are, their values are mostly just an offset in memory, which you can copy in the memory inspectior.
+
+![I didnt steal this one](/img/wasm/stackread.png)
+
+You can reveal that memory inspector panel by right-clicking on the memory space under "Module".
+
+
+![nor this one](/img/wasm/revealmemory.png)
+
 [Before going to the tasks, please read this, it will help a lot.](https://www.usenix.org/system/files/sec20-lehmann.pdf)
 
 Sidenote: The tasks are all compiled with emscripten, which takes input in a popup window before the task starts. After sending in your input, it will pop up again until you press cancel. To use it correctly, you'll need to enter your input in the first popup, and cancel the second one.
