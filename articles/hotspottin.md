@@ -16,6 +16,10 @@ If you are already using NetworkManager, this might be the easiest way to get th
 ```
 nmcli device wifi hotspot ifname wlp3s0 con-name hotsp ssid myHotspot password plsnohack
 ```
+Enable forwarding traffic to localhost:
+```
+sysctl -w net.ipv4.conf.all.route_localnet=1
+```
 Then you can forward any port to your (transparent) proxy, for example 80 & 443:
 ```
 sudo iptables -t nat -A PREROUTING -i wlp3s0 -p tcp --dport 80 -j DNAT --to 127.0.0.1:80
