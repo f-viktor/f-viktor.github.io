@@ -1,0 +1,444 @@
+I"�~<h1 id="gpu-passthrough-on-arch-linux">GPU-Passthrough on Arch Linux</h1>
+<p>Config files can be found <a href="https://github.com/f-viktor/GPU-Passthrough_Arch-Linux">here</a></p>
+
+<h1 id="setup">Setup</h1>
+<p>Date: 2017<br />
+Kernel: 4.14.idontremember<br />
+CPU: i5-4570 (host gpu)<br />
+GPU: GTX1060 (guest gpu)<br />
+RAM: 8GB (dont listen to the haters who say you need at least 12)<br />
+Guest: Windwos8.1 and Windows10 (7 does not support UEFI boot which is bad for some reason so you’ll have an easier time doing it with 8 and 10)</p>
+
+<p><a href="https://dominicm.com/gpu-passthrough-qemu-arch-linux/">a guide out of many, which I base this on. Not completely up to date, will throw issues</a></p>
+
+<p><a href="https://www.youtube.com/watch?v=6FI31QDtyy4">pretty good video, if you’re the visual type</a><br />
+will not work without fixing error 43, see below</p>
+
+<p><a href="https://bufferoverflow.io/gpu-passthrough/">pretty good guide</a></p>
+
+<p><a href="https://wiki.archlinux.org/index.php/PCI_passthrough_via_OVMF">Obligatory Arch wiki entry</a></p>
+
+<h1 id="checking-software-requirements">Checking software requirements</h1>
+<p>Just check if your kernel supports vfio-pci via</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>modinfo vfio-pci
+</code></pre></div></div>
+<p>if this does not throw “wtf is vfio-pci?” then you are golden</p>
+
+<p><strong>You can skip this if you didnt get an error</strong><br />
+You need some kernel after 4.1 I belive, to support vfio-pci. You can check your kernel version via</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>uname -r
+</code></pre></div></div>
+<p>or</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>uname -a
+</code></pre></div></div>
+
+<p>if you, for some reason do not have an up-to-date kernel…. why? Also there is a way to do this without vfio-pci, with pci-stub that should work on older kernels, but I have no idea how.<br />
+just write</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># pacman -Syyu
+</code></pre></div></div>
+<p>to update your Arch and thank me later ;)</p>
+
+<h1 id="checking-hardware-requirements">Checking hardware requirements</h1>
+<p>Bottom line, it’s easier to just try and check. You can enable IOMMU and check whether it worked.</p>
+
+<p><strong>Blabbering about marketing buzzwords</strong><br />
+So there is a bunch of links and things on the arch wiki page for what CPU/motherboard supports this,
+however none of those links are complete and very clear to understand. I read somewhere that your GPU should have an UEFI rom. I’ll be the first to say I have no idea what that means, and how to check this. if you have a gpu that is worth passing through it probably supports it</p>
+
+<p>Do note that if you have two of the same card(e.g.: an msi GTX1060 and another msi GTX1060) and wanna pass only one, you’re gonna have a hard time. Dunno if this applies to cards made by different manufacturers, run lspci -nn and check if they have different hardware IDs (gonna be in the format of [1337:ree1] )
+there is some script on the arch wiki for this but I have no idea how that works and I’ve never tried it.</p>
+
+<p><strong>Blabbering about marketing buzzwords 2: electric blabberoo</strong><br />
+<em>“A rose by any other name is just as botnet”</em><br />
+IOMMU==Vti-d==Vti-x==”Virtualization technology”==(whatever amd calls this) - its all the same s#!t mane.<br />
+Technically this is incorrect, as some of these are different technologies but if you bought a CPU and motherboard in this century, you should be OK. I’m gonna call this feature IOMMU throught this guide, and I’ll also call UEFI BIOS, because I’m oldschool like that, and I dont like to learn new words. I may also write vfio as vifo because I misread it the first time I saw it and it just burned into my subconcious.</p>
+
+<h1 id="enabling-iommu">Enabling IOMMU</h1>
+<p><strong>Step 1 - enabling it in BIOS</strong><br />
+What you wanna do is boot into your bios settings (aka mash F12 or Del or TAB while your PC boots) ,and look for a setting called any of the following:</p>
+<ul>
+  <li>IOMMU</li>
+  <li>vti-d</li>
+  <li>vti-x</li>
+  <li>“Virtualization technology”</li>
+</ul>
+
+<p>and enable it.</p>
+
+<p>ThinkPads currently come with a bios that mark this as vti-d and vti-x and MSI motherboards come with a bios that call this “Virtualization technology” as long as you found anything relevant to this, enable it. Look in Advanced settings, cpu settings, OC settings it may be well hidden. If it aint there, you may be out of luck. If you enabled it, boot into Arch.</p>
+
+<p><strong>Step 2 - enabling it in the bootloader</strong><br />
+For the purposes of this demonstration (and also because I’ve never used anything else), I’ll describe how to do it if you use grub as a bootloader. If you use “Systemd-boot” whatever that is, a link https://dominicm.com/gpu-passthrough-qemu-arch-linux/ that details that.</p>
+
+<p>Please bear in mind, that your config file will be different to mine, however nothing else needs to be changed for this to work.</p>
+
+<p>What you wanna do is</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># vim /etc/default/grub
+</code></pre></div></div>
+<p>and add <code class="language-plaintext highlighter-rouge">intel_iommu=on</code> in the place I added it in the uploaded config file. (for amd cpus this would be <code class="language-plaintext highlighter-rouge">amd_iommu=on</code>)
+then remake the grub config via:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># grub-mkconfig -o /boot/grub/grub.cfg
+</code></pre></div></div>
+<p>(this is the arch equivalent of <code class="language-plaintext highlighter-rouge">update-grub</code> from debian if you read one of those pesky debian guides)</p>
+
+<p>cool, now reboot.</p>
+
+<p><strong>Step 3 - did it work?</strong><br />
+open a terminal and enter</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dmesg | grep -e DMAR -e IOMMU
+</code></pre></div></div>
+<p>around the second line you should have something like <code class="language-plaintext highlighter-rouge">Intel-IOMMU: enabled</code>
+you should also probably have like 10-20 other lines.
+if your output doesn’t look something like this</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dmesg | grep -e DMAR -e IOMMU
+
+[    0.000000] ACPI: DMAR 0x00000000BDCB1CB0 0000B8 (v01 INTEL  BDW      00000001 INTL 00000001)
+[    0.000000] Intel-IOMMU: enabled
+[    0.028879] dmar: IOMMU 0: reg_base_addr fed90000 ver 1:0 cap c0000020660462 ecap f0101a
+[    0.028883] dmar: IOMMU 1: reg_base_addr fed91000 ver 1:0 cap d2008c20660462 ecap f010da
+[    0.028950] IOAPIC id 8 under DRHD base  0xfed91000 IOMMU 1
+[    0.536212] DMAR: No ATSR found
+[    0.536229] IOMMU 0 0xfed90000: using Queued invalidation
+[    0.536230] IOMMU 1 0xfed91000: using Queued invalidation
+[    0.536231] IOMMU: Setting RMRR:
+[    0.536241] IOMMU: Setting identity map for device 0000:00:02.0 [0xbf000000 - 0xcf1fffff]
+[    0.537490] IOMMU: Setting identity map for device 0000:00:14.0 [0xbdea8000 - 0xbdeb6fff]
+[    0.537512] IOMMU: Setting identity map for device 0000:00:1a.0 [0xbdea8000 - 0xbdeb6fff]
+[    0.537530] IOMMU: Setting identity map for device 0000:00:1d.0 [0xbdea8000 - 0xbdeb6fff]
+[    0.537543] IOMMU: Prepare 0-16MiB unity mapping for LPC
+[    0.537549] IOMMU: Setting identity map for device 0000:00:1f.0 [0x0 - 0xffffff]
+[    2.182790] [drm] DMAR active, disabling use of stolen memory
+
+</code></pre></div></div>
+<p>I can’t help you :(</p>
+
+<h1 id="checking-the-iommu-groups">Checking the IOMMU groups</h1>
+<p>IOMMU groups devices based on some magic I’m not smart enough to tell you about. But I dont really need to understand it to take advantage of it right?
+so type:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>lspci -nn
+</code></pre></div></div>
+<p>and</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>find /sys/kernel/iommu_groups/ -type l
+</code></pre></div></div>
+
+<p>In the output of <code class="language-plaintext highlighter-rouge">lspci -nn</code>, you’ll have a number of pci devices with their  respective IDs like this:</p>
+
+<p>find the line describing the gpu you wanna passthrough, its gonna be something like “VGA” or 3D controller and then the name of your GPU e.g.: NVIDIA Corporation GTX1060 or something like this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>01:00.0 3D controller [0302]: NVIDIA Corporation GF117M [GeForce 610M/710M/810M/820M / GT 620M/625M/630M/720M] [10de:1140] (rev a1)
+</code></pre></div></div>
+<p>note the number at the beginning of the line <strong>01:00.0</strong></p>
+
+<p>Note: this is not the ID of a GTX1060, this is another laptops dedicated GPU that I’m writing this from.</p>
+
+<p>Now look at the output of <code class="language-plaintext highlighter-rouge">find /sys/kernel/iommu_groups/ -type l</code>. Its gonna have lines like this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/sys/kernel/iommu_groups/1/devices/0000:00:02.0
+</code></pre></div></div>
+<p>at the end of these entries you also have a number in the format <strong>00:02.0</strong></p>
+
+<p>so every line in <code class="language-plaintext highlighter-rouge">find /sys/kernel/iommu_groups/ -type l</code> contains a group ID<br />
+/sys/kernel/iommu_groups/<strong>1</strong>/devices/0000:00:02.0<br />
+and a device ID<br />
+/sys/kernel/iommu_groups/1/devices/0000:<strong>00:02.0</strong></p>
+
+<p>what you wanna do is look for the line that has your GPU’s device ID (identified from <code class="language-plaintext highlighter-rouge">lspci -nn</code>) and check the group ID of that line. There lie now 4 possibilities in front of us:</p>
+
+<p><strong>Possibility 1: there is no line containing the hardware ID of your GPU in the output of find /sys/kernel/iommu_groups/ -type l</strong><br />
+in this case, I think you might have messed something up, I have no idea how you did this.</p>
+
+<p><strong>Possibility 2: the hardware ID of your GPU is the only one in its group, there are no other lines with that group ID</strong><br />
+You’re golden.</p>
+
+<p><strong>Possibility 3: the GPU built in HDMI audio device is also in that group and/or the PCI bridge is in that group</strong><br />
+This should be easy to spot, the HDMI audio device is going to have the same NVIDIA tag in its name, etc, the PCI bridge is gonna be called PCI bridge.</p>
+
+<p>This is not a problem, you do not have to do anything in this case. However be sure, that when you bind the devices, and pass the devices and do anything always bind the GPU+ the HDMI audio device together, but <strong>not</strong> the PCI bridge. e.g. later on we’ll have a step where we add device IDs to a config file. Only add the GPU and the audio device, do <strong>not</strong> add the PCI bridge. We’ll also have a step where we add pci devices in qemu, do the same, do <strong>not</strong> add the pci bridge.</p>
+
+<p><strong>Possibility 4: the GPU is grouped with all kinds of wierd things, like an audio card or some network controller or another GPU you wanna pass</strong><br />
+This ain’t good sonny boy, but do not worry.<br />
+I never had to do this, I believe this is kind of a rare issue, but here is how you fix it:</p>
+
+<p><strong>Fix#1 - Welcome to the real world</strong><br />
+Turn off your PC, rip out your GPU, put it in another PCIe slot if you have one, check again.</p>
+
+<p><strong>Fix#2 - Apply the ACS patch.</strong><br />
+The only way I know of how to do this involves installing the patched kernel from AUR and enabling it in the bootloader, here’s how you do that:<br />
+https://dominicm.com/install-vfio-kernel-arch-linux/<br />
+do not use packer, its a mess, just</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>git clone https://aur.archlinux.org/linux-vfio.git   
+</code></pre></div></div>
+<p>go into the directory</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>cd ./linux-vfio/
+</code></pre></div></div>
+<p>and</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>makepkg --skippgpcheck
+</code></pre></div></div>
+<p>this is gonna take like 4 hours, I’m not even joking.<br />
+it may also throw things in the beginning like “command not found fakeroot” or something else, whatever it throws just install it with:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo pacman -S fakeroot
+</code></pre></div></div>
+<p>and restart it<br />
+after its done do</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo pacman -U linux-vfio-4.9.8-1-x86_64.pkg.tar.xz
+sudo pacman -U linux-vfio-headers-4.9.8-1-x86_64.pkg.tar.xz
+</code></pre></div></div>
+
+<p>now remake grub</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># grub-mkconfig -o /boot/grub/grub.cfg
+</code></pre></div></div>
+<p>should automagically find the new kernels that are named something like vmlinuz-linux-vifo<br />
+find the relevan kernel entry in <code class="language-plaintext highlighter-rouge">/boot/grub/grub.conf</code> (or wherever is your default boot directory) and add to the options after <code class="language-plaintext highlighter-rouge">intel_iommu=on</code> the following separated by a space:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>pcie_acs_override=downstream
+</code></pre></div></div>
+<p>(you can also just add it in <code class="language-plaintext highlighter-rouge">/etc/default/grub</code> like we did for ˙<code class="language-plaintext highlighter-rouge">intel_iommu</code>, but that will add it for all your kernels, and it may or may not cause an issue when running other kernels. if you do this, rerun <code class="language-plaintext highlighter-rouge">grub-mkconfig</code>)
+save it and reboot, then choose this kernel in the boot menu (it may be under advanced options in the grub menu)<br />
+check if it is the vfio kernel via</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>uname -a
+</code></pre></div></div>
+<p>should have vfio written in it somewhere, that means you did it.<br />
+This should allow you to pass any device regardless of IOMMU groups, however you still wanna pass the gpu hdmi audio if you have one, as some cards just do not work without it for reasons beyond me.</p>
+
+<h1 id="adding-vfio-kernelmodules">Adding vfio kernelmodules</h1>
+<p>you gotta add the vfio kernelmodules or something so the vfio drivers can hold your gpu for you when the VM is not running. You gotta:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># vim /etc/mkinitcpio.conf
+</code></pre></div></div>
+<p>There is going to be a line like <code class="language-plaintext highlighter-rouge">MODULES()</code> or <code class="language-plaintext highlighter-rouge">MODULES=""</code>  (depending on wether your kernel is in python2 or python3 eh? :D)<br />
+regardless add the following between the “” or ():</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vfio vfio_iommu_type1 vfio_pci vfio_virqfd
+</code></pre></div></div>
+<p>if there was anything already there like i915 or nouveau, be sure to write this <strong>before</strong> whatever was there, e.g.:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>MODULES(vfio vfio_iommu_type1 vfio_pci vfio_virqfd i915 nouveau)
+</code></pre></div></div>
+<p>save the file, then run:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo mkinitcpio -p linux
+</code></pre></div></div>
+
+<h1 id="defining-devices-to-be-bound-by-vfio-drivers">Defining devices to be bound by vfio drivers</h1>
+<p>Okay cool, so now vfio drivers will be the first to choose devices
+you gotta tell them what devices to choose tho.
+edit</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># vim /etc/modprobe.d/vfio.conf
+</code></pre></div></div>
+<p>(dont worry if the file does not exist, for me the entire directory was missing)</p>
+
+<p>and write the line</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>options vfio-pci ids=10de:1c03,10de:10f1
+</code></pre></div></div>
+<p>where the ids= are the hardware ID of the GPU and HDMI audio device from the output of <code class="language-plaintext highlighter-rouge">lspci -nn</code></p>
+
+<p>rerun</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo mkinitcpio -p linux
+</code></pre></div></div>
+<p>for good measure
+then reboot</p>
+
+<p>afte rebooting, write</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>lspci -nnk
+</code></pre></div></div>
+<p>and check if the devices were bound by the vfio-pci driver
+it should look something like this</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    01:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Ellesmere [Polaris10] [1002:67df] (rev c7)
+    	Subsystem: Advanced Micro Devices, Inc. [AMD/ATI] Device [1002:0b37]
+    	Kernel driver in use: vfio-pci
+    01:00.1 Audio device [0403]: Advanced Micro Devices, Inc. [AMD/ATI] Device [1002:aaf0]
+    	Subsystem: Advanced Micro Devices, Inc. [AMD/ATI] Device [1002:aaf0]
+    	Kernel driver in use: vfio-pci
+    	Kernel modules: snd_hda_intel
+</code></pre></div></div>
+<p>note the <code class="language-plaintext highlighter-rouge">Kernel driver in use:</code> parameter. If it doesnt look like that, you messed something up, recheck your conf files, re run</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo mkinitcpio -p linux
+</code></pre></div></div>
+<p>re reboot</p>
+
+<p>you can also check</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo dmesg | grep -i vfio
+</code></pre></div></div>
+<p>the device ids should be in there somewhere if it’s working right</p>
+
+<h1 id="installing-necessary-software-for-emulation">Installing necessary software for emulation</h1>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo pacman -S qemu libvirt ovmf virt-manager
+</code></pre></div></div>
+<p>boy, that was an easy step, really refreshing isn’t it?</p>
+
+<h1 id="getting-the-latest-ovmf">Getting the latest ovmf</h1>
+<p>Now its true that we installed ovmf in the last step, but the repo wersion includes firmware files that just did not work for me. When I tried to boot the windows installer it just blanked, and threw me in the UEFI shell. Sidenote: if that happens to you, try typing exit and opening the image from the boot manager, or typing <code class="language-plaintext highlighter-rouge">fs0:</code> and manually browsing to the <code class="language-plaintext highlighter-rouge">/boot/efi</code> folder in the windows disk and typing the .efi file name, see if that works. (side sidenote, it probably wont)</p>
+
+<p>So there is a great guy who does this:<br />
+https://www.kraxel.org/repos/jenkins/edk2/<br />
+you’ll need the one that looks like: <code class="language-plaintext highlighter-rouge">edk2.git.ovmf-x64-&lt;somedate&gt;.&lt;jibberish&gt;.&lt;jibberish&gt;.noarch.rpm</code><br />
+download that one, and since it is in .rpm, install rpmextract:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo pacman -S rpmextract
+</code></pre></div></div>
+<p>now do this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rpmextract.sh edk2.git-ovmf-x64-0-20150916.b1214.g2f667c5.noarch.rpm 
+ls edk2.git-ovmf-x64-0-20150916.b1214.g2f667c5.noarch.rpm usr 
+sudo cp -R usr/share/* /usr/share/
+</code></pre></div></div>
+<p>Your files should be in</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/usr/share/edk2.git/ovmf-x64/
+</code></pre></div></div>
+<p>after this.</p>
+
+<h1 id="applying-the-latest-ovmf">Applying the latest ovmf</h1>
+<p>now we gotta tell qemu to actually use what you downloaded
+for this you’ll need to edit this file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># vim /etc/libvirt/qemu.conf
+</code></pre></div></div>
+<p>the whole thing should be commented out
+there is going to be commented lines that look something like this(check for format clues), but feel free to just add this to the end of the file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nvram = [
+"/usr/share/edk2.git/ovmf-x64/OVMF-pure-efi.fd:/usr/share/edk2.git/ovmf-x64/OVMF_VARS-pure-efi.fd"
+]
+</code></pre></div></div>
+<p>check if those two files actually exist, I may have mistyped something. If you do not even get a bootloader on your vm, you messed this step up.</p>
+
+<h1 id="enable-libvirtd">Enable libvirtd</h1>
+<p>just open a console and type</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>systemctl enable --now libvirtd
+systemctl enable virtlogd.socket
+</code></pre></div></div>
+<p>do a reboot just for good measure, even though its probably unnecessary</p>
+
+<p>if libvirtd doesnt start, and systemctl status libvirtd gives you something like “cannot find user ‘tss’” just 
+<code class="language-plaintext highlighter-rouge">sudo useradd -G tss tss</code> to create the user and the group tss</p>
+
+<h1 id="creating-the-vm">Creating the VM</h1>
+<p>kay so lets do this, LEEEEROOOOY JENKIIIHNS<br />
+the video I mentioned earlier makes this way easier but misses some things:<br />
+https://www.youtube.com/watch?v=6FI31QDtyy4</p>
+
+<p><strong>Step 1: starting virt-manager</strong>
+before starting virt-manager, you probably want to start the default network so it does not complain about it<br />
+just do</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># virsh net-start default
+</code></pre></div></div>
+<p>this will throw an error this time, because the network does not yet exist, but you’ll have to do this every time after creating your first vm if you put it in the default network, otherwise it will not start. You can also just pass the host network device to the VM, but this will not allow you to communicate from your host to the guest through the network, as they would have to use the same NIC.<br />
+and to start virt-manager</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># virt-manager
+</code></pre></div></div>
+<p>you wanna run this as root. especially if you get some sort of login error from virtmanager otherwise</p>
+
+<p><strong>Step 2: create new vm</strong>
+basic stuff, select windows iso, set resources, check customize options.</p>
+
+<p>on the configure window set the following (you gotta check appy  on every screen)<br />
+CPU:<br />
+  copy host CPU configuration - check<br />
+IDE Disk 1:<br />
+  change IDE to VirtIO<br />
+IDE CDrom:<br />
+  change IDE to SATA and browse windows .iso<br />
+Add Hardware -&gt; Storage-&gt; Cd drive,<br />
+  change IDE to SATA and browse viirtio driver (https://fedoraproject.org/wiki/Windows_Virtio_Drivers)<br />
+Boot Options<br />
+  Enable boot menu - check<br />
+  set boot order as: #1 Windows CD #2 virto driver #3 hdd<br />
+Add Hardware-PCIe something<br />
+  select the GPU and HDMI audio devices in PCIE</p>
+
+<p>At this point you should be able install windows in a window<br />
+you will have to load the virtio driver when selecting the harddrive otherwise you won’t see any disks.</p>
+
+<p><strong>Step 3: fixing CPU performance</strong>
+If your CPU multicore performance benchmarks horribly with this setup, it may be because QEMU by default virtualizes cpu cores as separate sockets. The issue is that Windows can handle up to 2 separate sockets in a system, and if you pass more than that, it’ll just ignore those cores/sockets. A telltale sign of this is when you press Win+Pause|Breake, you’ll see it saying 2 cpus, but in device managers it will show 4 cpu devices.  To fix tihs, simpy go to the CPU menu in virt-manager and choose<br />
+CPU:<br />
+Manually set CPU topology<br />
+you should see something like   <br />
+Sockets: 4<br />
+Cores: 1 <br />
+Threads: 1</p>
+
+<p>Change this to:<br />
+Sockets: 1<br />
+Cores: 4<br />
+Threads: 1</p>
+
+<p>Now Windows should see the CPU as 1 cpu with 4 cores.</p>
+
+<h1 id="after-installation">After installation</h1>
+<p>Remove the devices QXL and spice, and change the windows should now come through your GPU that you passed through.
+mouse and keyboard will no longer work however,
+you can plug in extra mice and keyboard, or just give it your own,
+Add Hardware-&gt; USB something
+add your keyboard first, as you’ll need your mouse to add your mouse. (you’ll get them back when you shut down the VM)</p>
+
+<p>Install the latest drivers, nvidia drivers will install but will refuse to work.
+In device manager the device will be disabled due to error: 43 and your resolution will be bound to 800x600
+to fix this you’ll have to find the .xml file of your VM,</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ locate &lt;nameofyourvm&gt;
+</code></pre></div></div>
+<p>if you dont have locate, you can use find. It should be in <code class="language-plaintext highlighter-rouge">/etc/libvirt/qemu/&lt;nameofyourvm&gt;.xml</code> or something like this</p>
+
+<p>you’ll have to add the lines</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;domain&gt;
+    ...
+        &lt;features&gt;
+            ...
+            &lt;kvm&gt;
+                &lt;hidden state='on'/&gt;
+            &lt;/kvm&gt;
+            ...
+            &lt;hyperv&gt;
+                ...
+                &lt;vendor_id state='on' value='whatever'/&gt;
+            &lt;/hyperv&gt;
+            ...
+        &lt;/features&gt;
+    ...
+&lt;/domain&gt;
+</code></pre></div></div>
+<p>(domain, features and hyperv will probably already be there, but kvm may not be there, just ensure these all exist in this structure in your xml)<br />
+save the file, reboot a few times, etc<br />
+the driver should now work.<br />
+however it may not for some people<br />
+there is a workaround by patching the driver itself on the guest windows machine, it is kind of experimental:<br />
+https://github.com/sk1080/nvidia-kvm-patcher</p>
+
+<h1 id="creating-sound">Creating sound</h1>
+<p>You can either buy a PCIe/USB soundboard and pass it through, or you can be cheapskate like me</p>
+
+<p><strong>Setting up audio with PulseAudio</strong>
+You can pass back the audio output of the VM to PulseAudio as a normal application.
+Please note that this does not allow audio into the VM (it may be possible to do but idk how)
+Just follow the arch wiki guide, it is simple and detailed:
+https://wiki.archlinux.org/index.php/PCI_passthrough_via_OVMF#Passing_VM_audio_to_host_via_PulseAudio</p>
+
+<p><strong>Windows10 sound problems with PulseAudio</strong><br />
+Being that Windows10 is Windows10, it tries to be smarter than you and fails miserably every single time.<br />
+If you’re running a Windows10 kvm with ich6, Windows10 will install the Realtek hi-def audio driver, this will produce some audio problems, that could best be described as the sound of someone stabbing your ears from really far away.</p>
+
+<p>To fix this you need to set the sound card in virt-manager (or wherever you may please) from ich6 to ac97. After this reboot the KVM a few times and a “Multimedia device” or something should appear in Device manager. Download the appropriate drivers (http://www.realtek.com.tw/downloads/downloadsCheck.aspx?Langid=1&amp;PNid=14&amp;PFid=23&amp;Level=4&amp;Conn=3&amp;DownTypeID=3&amp;GetDown=false). Funny thing, the drivers are from waaaay back in the day, so their certificate is expired. You’ll have to disable driver certificate validation in windows10 and install these drivers, then viola.</p>
+
+<p>Forum post describing the same issue and fix: https://stackoverflow.com/questions/32193050/qemu-pulseaudio-and-bad-quality-of-sound/35998501#35998501<br />
+A video on disabling driver certificate checks: https://www.youtube.com/watch?v=5-Y-oq3DMMA</p>
+
+<h1 id="plus-tips">Plus tips</h1>
+
+<p><strong>Config doesn’t change in virt-manager</strong>
+If you changed some config in a vm xml or just some anytihng you’ll have to restart a good few services before virt-manager realises this, your best bet is to just reboot.</p>
+
+<p><strong>Moving the image</strong><br />
+lets say you created the image in the wrong place or wanna lend it to your friend,<br />
+real simple, you just gotta change the disk line in <code class="language-plaintext highlighter-rouge">/etc/qemu/wmaneme.xml</code><br />
+and move the file that it was pointing at</p>
+
+<p><strong>Unknown devices in Guest device manager</strong>
+This might happen to you if you use the virtualised storage described in this guide. I had <code class="language-plaintext highlighter-rouge">PCI device</code> and <code class="language-plaintext highlighter-rouge">PCI Communications device</code> or something as “no device found” in device manager. This is because Windows does not know the VirtIO drivers by itself. Download the .iso of the drivers to your guest from https://fedoraproject.org/wiki/Windows_Virtio_Drivers  (Stable virtio-win iso) and mount it with something like Virtual CloneDrive.<br />
+As to which drivers do you actually need, chose the device in the Device manager, go to details and google the HardwareID. Google will throw a bunch of cancer “Driver download” sites where you can download malware. But they also identify the neccessary drivers correctly. If you followed this guide you’ll have install the “Balloon” driver for the <code class="language-plaintext highlighter-rouge">PCI Device</code> and the “serial” driver for the <code class="language-plaintext highlighter-rouge">PCI Communications device</code>.</p>
+
+<p><strong>Preventing BSOD in some applications</strong>
+You may find that certain applications cause a BSOD on startup or basically at any given time. This may be caused by an unimplemented MSR call. What’s an MSR call, you ask? No idea, but by writing this <code class="language-plaintext highlighter-rouge">options kvm ignore_msrs=1
+</code> into <code class="language-plaintext highlighter-rouge">/etc/modprobe.d/kvm.conf</code> it might fix it. This may cause some other unexpected issues, so do not enable it if you don’t get BSODs.</p>
+
+<p><strong>In case some games unexpectedly crash on startup</strong>
+If some applications (Usually multiplayer games) crash on startup and you have no idea why, try adding the following:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;qemu:commandline&gt;
+    ...
+    &lt;qemu:arg value='-cpu'/&gt;
+    &lt;qemu:arg value='host,hv_time,kvm=off,hv_vendor_id=null,-hypervisor'/&gt;
+    ...
+  &lt;/qemu:commandline&gt;
+</code></pre></div></div>
+<p>to your <code class="language-plaintext highlighter-rouge">/etc/libvirt/qemu/VMname.xml</code> you can see this in my Win10.xml in this repo.</p>
+
+:ET

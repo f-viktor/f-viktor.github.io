@@ -4,13 +4,28 @@ layout: default
 
 # When to do This
 
-In short: when normal proxying just doesnt cut it.  
+In short: when normal proxying just doesn't cut it.  
 Let's say you want to "debug" a mobile application that is not (or only partially) proxy-aware.    
 Let's say this same mobile application cannot be proxied from Android-studio for whatever reason. (maybe it doesn't work there, or you only want one port to be proxied and not another)  
 Maybe you want to "debug" the traffic of an IoT device that is spying on you and sending data to a foreign government.
 For those use-cases, you can set up a Wi-Fi network and selectively proxy some or **ALL** of the traffic of a device.
 
-# Preparation
+# The NetworkManager way
+
+If you are already using NetworkManager, this might be the easiest way to get this going but with ease of use, comes lack of customisability. NetworkManager has a built-in way to set up a hotspot. This will only work if your internet interface is also managed by NetworkManager.`wlp3s0` is the name of the Wi-Fi interface in this example. 
+```
+nmcli device wifi hotspot ifname wlp3s0 con-name hotsp ssid myHotspot password plsnohack
+```
+Then you can forward any port to your (transparent) proxy by:
+```
+sudo iptables -t nat -A PREROUTING -i wlp3s0 -p tcp --dport 80 -j DNAT --to 127.0.0.1:80
+```
+Bonus Tip! You can listen on low ports with your proxy without root privileges via:
+```
+sysctl net/ipv4/ip_unprivileged_port_start=80
+```
+
+# The non-NetworkManager way
 
 First, do yourself a favor and
 ```
@@ -157,7 +172,7 @@ sysctl net.ipv4.ip_forward=1
 iptables -t nat -A POSTROUTING -o $INTERNET -j MASQUERADE
 iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 iptables -A FORWARD -i wlan_ap -o $INTERNET -j ACCEPT
-sysctl net/ipv4/ip_unprivileged_port_start=443
+sysctl net/ipv4/ip_unprivileged_port_start=80
 sysctl -w net.ipv4.conf.all.route_localnet=1
 systemctl start dnsmasq
 

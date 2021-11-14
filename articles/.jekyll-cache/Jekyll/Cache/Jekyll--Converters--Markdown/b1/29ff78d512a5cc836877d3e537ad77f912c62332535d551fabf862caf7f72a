@@ -1,0 +1,260 @@
+I"]Z<h1 id="the-411">The 411</h1>
+<p>Here is a similar example about setting up a fuzzer for <a href="openh264">h.264</a> based on a unit test.
+This will be much more compressed in size as I don’t plan to explain the steps again. Hopefully it will be useful as a reminder so we don’t have to scroll through the first part’s million pages to find examples for things.</p>
+
+<h2 id="the-build">The build</h2>
+<p>You can build this library with a simple make command</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make OS=linux ARCH=x86_64
+</code></pre></div></div>
+<p>It will give you a bunch of static libs</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ls  *.a *.so* | sort
+libcommon.a
+libconsole_common.a
+libdecoder.a
+libencoder.a
+libopenh264.a
+libopenh264.so
+libopenh264.so.2.1.0
+libopenh264.so.6
+libprocessing.a
+</code></pre></div></div>
+
+<p>To build with clang just set the env variables</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make OS=linux ARCH=x86_64 CC=clang CXX=clang++
+</code></pre></div></div>
+
+<p>To build for fuzzing just set the <code class="language-plaintext highlighter-rouge">CFLAGS</code> <code class="language-plaintext highlighter-rouge">CXXFLAGS</code> and <code class="language-plaintext highlighter-rouge">LDFLAGS</code></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>OS=linux ARCH=x86_64 CC=clang CXX=clang++ CFLAGS+=-fsanitize=fuzzer-no-link CXXFLAGS+=-fsanitize=fuzzer-no-link LDFLAGS+=-fsanitize=fuzzer-no-link make
+</code></pre></div></div>
+
+<h2 id="the-harnessfuzz-target">The harness/fuzz-target</h2>
+
+<p>I’ve found this comment in one of the files after I finished rewriting a unit test, but it’s very informative about how the lib works.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+/**
+* @page DecoderUsageExample
+*
+* @brief
+* * An example for using the decoder for Decoding only or Parsing only
+*
+* Step 1:decoder declaration
+* @code
+*
+* //decoder declaration
+* ISVCDecoder *pSvcDecoder;
+* //input: encoded bitstream start position; should include start code prefix
+* unsigned char *pBuf =...;
+* //input: encoded bit stream length; should include the size of start code prefix
+* int iSize =...;
+* //output: [0~2] for Y,U,V buffer for Decoding only
+* unsigned char *pData[3] =...;
+* //in-out: for Decoding only: declare and initialize the output buffer info, this should never co-exist with Parsing only
+* SBufferInfo sDstBufInfo;
+* memset(&amp;sDstBufInfo, 0, sizeof(SBufferInfo));
+* //in-out: for Parsing only: declare and initialize the output bitstream buffer info for parse only, this should never co-exist with Decoding only
+* SParserBsInfo sDstParseInfo;
+* memset(&amp;sDstParseInfo, 0, sizeof(SParserBsInfo));
+* sDstParseInfo.pDstBuff = new unsigned char[PARSE_SIZE]; //In Parsing only, allocate enough buffer to save transcoded bitstream for a frame
+*
+* @endcode
+*
+* Step 2:decoder creation
+* @code
+* WelsCreateDecoder(&amp;pSvcDecoder);
+* @endcode
+*
+* Step 3:declare required parameter, used to differentiate Decoding only and Parsing only
+* @code
+* SDecodingParam sDecParam = {0};
+* sDecParam.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
+* //for Parsing only, the assignment is mandatory
+* sDecParam.bParseOnly = true;
+* @endcode
+*
+* Step 4:initialize the parameter and decoder context, allocate memory
+* @code
+* pSvcDecoder-&gt;Initialize(&amp;sDecParam);
+* @endcode
+*
+* Step 5:do actual decoding process in slice level;
+* this can be done in a loop until data ends
+* @code
+* //for Decoding only
+* iRet = pSvcDecoder-&gt;DecodeFrameNoDelay(pBuf, iSize, pData, &amp;sDstBufInfo);
+* //or
+* iRet = pSvcDecoder-&gt;DecodeFrame2(pBuf, iSize, pData, &amp;sDstBufInfo);
+* //for Parsing only
+* iRet = pSvcDecoder-&gt;DecodeParser(pBuf, iSize, &amp;sDstParseInfo);
+* //decode failed
+* If (iRet != 0){
+* //error handling (RequestIDR or something like that)
+* }
+* //for Decoding only, pData can be used for render.
+* if (sDstBufInfo.iBufferStatus==1){
+* //output handling (pData[0], pData[1], pData[2])
+* }
+* //for Parsing only, sDstParseInfo can be used for, e.g., HW decoding
+* if (sDstBufInfo.iNalNum &gt; 0){
+* //Hardware decoding sDstParseInfo;
+* }
+* //no-delay decoding can be realized by directly calling DecodeFrameNoDelay(), which is the recommended usage.
+* //no-delay decoding can also be realized by directly calling DecodeFrame2() again with NULL input, as in the following. In this case, decoder would immediately reconstruct the input data. This can also be used similarly for Parsing only. Consequent decoding error and output indication should also be considered as above.
+* iRet = pSvcDecoder-&gt;DecodeFrame2(NULL, 0, pData, &amp;sDstBufInfo);
+* //judge iRet, sDstBufInfo.iBufferStatus ...
+* @endcode
+*
+* Step 6:uninitialize the decoder and memory free
+* @code
+* pSvcDecoder-&gt;Uninitialize();
+* @endcode
+*
+* Step 7:destroy the decoder
+* @code
+* DestroyDecoder(pSvcDecoder);
+* @endcode
+*
+*/
+</code></pre></div></div>
+
+<p>I used parts of the unit test <a href="https://github.com/cisco/openh264/blob/master/test/decoder/DecUT_DecExt.cpp">DecUT_DecExt.cpp</a> to write my fuzzer, as you can see it’s mostly just the re-writing part of the unit test:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+<span class="cp">#include "codec_def.h"
+#include "codec_app_def.h"
+#include "codec_api.h"
+#include "error_code.h"
+#include "wels_common_basis.h"
+#include "memory_align.h"
+#include "ls_defines.h"
+</span>
+<span class="n">using</span> <span class="n">namespace</span> <span class="n">WelsDec</span><span class="p">;</span>
+<span class="cp">#define BUF_SIZE 100
+</span><span class="c1">//payload size exclude 6 bytes: 0001, nal type and final '\0'</span>
+<span class="cp">#define PAYLOAD_SIZE (BUF_SIZE - 6)
+</span>
+
+<span class="c1">//Init members</span>
+<span class="kt">int32_t</span> <span class="nf">Init</span><span class="p">();</span>
+
+<span class="c1">//Decoder real bitstream</span>
+<span class="kt">void</span> <span class="nf">DecoderBs</span> <span class="p">(</span><span class="k">const</span> <span class="kt">char</span><span class="o">*</span> <span class="n">sFileName</span><span class="p">);</span>
+
+
+<span class="n">ISVCDecoder</span><span class="o">*</span> <span class="n">m_pDec</span><span class="p">;</span>
+<span class="n">SDecodingParam</span> <span class="n">m_sDecParam</span><span class="p">;</span>
+<span class="n">SBufferInfo</span> <span class="n">m_sBufferInfo</span><span class="p">;</span>
+<span class="n">SParserBsInfo</span> <span class="n">m_sParserBsInfo</span><span class="p">;</span>
+<span class="kt">uint8_t</span><span class="o">*</span> <span class="n">m_pData</span><span class="p">[</span><span class="mi">3</span><span class="p">];</span>
+<span class="kt">unsigned</span> <span class="kt">char</span> <span class="n">m_szBuffer</span><span class="p">[</span><span class="n">BUF_SIZE</span><span class="p">];</span> <span class="c1">//for mocking packet</span>
+<span class="kt">int</span> <span class="n">m_iBufLength</span><span class="p">;</span> <span class="c1">//record the valid data in m_szBuffer</span>
+<span class="n">bool</span> <span class="n">firstrun</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+
+
+<span class="c1">//Init members</span>
+<span class="kt">int32_t</span> <span class="nf">Init</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">firstrun</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+  <span class="n">memset</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">m_sBufferInfo</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span> <span class="p">(</span><span class="n">SBufferInfo</span><span class="p">));</span>
+  <span class="n">memset</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">m_sParserBsInfo</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span> <span class="p">(</span><span class="n">SParserBsInfo</span><span class="p">));</span>
+  <span class="n">memset</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">m_sDecParam</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span> <span class="p">(</span><span class="n">SDecodingParam</span><span class="p">));</span>
+  <span class="n">m_sDecParam</span><span class="p">.</span><span class="n">pFileNameRestructed</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+  <span class="n">m_sDecParam</span><span class="p">.</span><span class="n">uiCpuLoad</span> <span class="o">=</span> <span class="n">rand</span><span class="p">()</span> <span class="o">%</span> <span class="mi">100</span><span class="p">;</span>
+  <span class="n">m_sDecParam</span><span class="p">.</span><span class="n">uiTargetDqLayer</span> <span class="o">=</span> <span class="n">rand</span><span class="p">()</span> <span class="o">%</span> <span class="mi">100</span><span class="p">;</span>
+  <span class="n">m_sDecParam</span><span class="p">.</span><span class="n">eEcActiveIdc</span> <span class="o">=</span> <span class="p">(</span><span class="n">ERROR_CON_IDC</span><span class="p">)</span> <span class="p">(</span><span class="n">rand</span><span class="p">()</span> <span class="o">&amp;</span> <span class="mi">7</span><span class="p">);</span>
+  <span class="n">m_sDecParam</span><span class="p">.</span><span class="n">sVideoProperty</span><span class="p">.</span><span class="n">size</span> <span class="o">=</span> <span class="k">sizeof</span> <span class="p">(</span><span class="n">SVideoProperty</span><span class="p">);</span>
+  <span class="n">m_sDecParam</span><span class="p">.</span><span class="n">sVideoProperty</span><span class="p">.</span><span class="n">eVideoBsType</span> <span class="o">=</span> <span class="p">(</span><span class="n">VIDEO_BITSTREAM_TYPE</span><span class="p">)</span> <span class="p">(</span><span class="n">rand</span><span class="p">()</span> <span class="o">%</span> <span class="mi">2</span><span class="p">);</span>
+  <span class="kt">int</span> <span class="n">rv</span> <span class="o">=</span> <span class="n">WelsCreateDecoder</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">m_pDec</span><span class="p">);</span>
+
+  <span class="n">m_pData</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">m_pData</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">m_pData</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+  <span class="n">m_szBuffer</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">m_szBuffer</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">m_szBuffer</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">m_szBuffer</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+  <span class="n">m_iBufLength</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span>
+  <span class="n">CM_RETURN</span> <span class="n">eRet</span> <span class="o">=</span> <span class="p">(</span><span class="n">CM_RETURN</span><span class="p">)</span> <span class="n">m_pDec</span><span class="o">-&gt;</span><span class="n">Initialize</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">m_sDecParam</span><span class="p">);</span>
+  <span class="k">return</span> <span class="p">(</span><span class="kt">int32_t</span><span class="p">)</span><span class="n">eRet</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">extern</span> <span class="s">"C"</span> <span class="kt">int</span> <span class="nf">LLVMFuzzerTestOneInput</span><span class="p">(</span><span class="k">const</span> <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+
+  <span class="kt">uint8_t</span><span class="o">*</span> <span class="n">pBuf</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+  <span class="kt">int32_t</span> <span class="n">iBufPos</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="kt">int32_t</span> <span class="n">iFileSize</span><span class="p">;</span>
+  <span class="kt">int32_t</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="kt">int32_t</span> <span class="n">iSliceSize</span><span class="p">;</span>
+  <span class="kt">int32_t</span> <span class="n">iSliceIndex</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="kt">int32_t</span> <span class="n">iEndOfStreamFlag</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+  <span class="kt">uint8_t</span> <span class="n">uiStartCode</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">};</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">firstrun</span><span class="p">){</span>
+    <span class="n">Init</span><span class="p">();</span>
+  <span class="p">};</span>
+  <span class="n">pBuf</span> <span class="o">=</span> <span class="n">new</span> <span class="kt">uint8_t</span><span class="p">[</span><span class="n">size</span> <span class="o">+</span> <span class="mi">4</span><span class="p">];</span>
+  <span class="n">memcpy</span><span class="p">(</span><span class="n">pBuf</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+  <span class="n">memcpy</span><span class="p">(</span><span class="n">pBuf</span> <span class="o">+</span> <span class="n">size</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">uiStartCode</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">4</span><span class="p">);</span> <span class="c1">//confirmed_safe_unsafe_usage</span>
+
+  <span class="n">iFileSize</span> <span class="o">=</span> <span class="n">size</span><span class="p">;</span>
+
+
+  <span class="k">while</span> <span class="p">(</span><span class="nb">true</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">iBufPos</span> <span class="o">&gt;=</span> <span class="n">iFileSize</span><span class="p">)</span> <span class="p">{</span>
+      <span class="n">iEndOfStreamFlag</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">iEndOfStreamFlag</span><span class="p">)</span>
+      <span class="n">m_pDec</span><span class="o">-&gt;</span><span class="n">SetOption</span> <span class="p">(</span><span class="n">DECODER_OPTION_END_OF_STREAM</span><span class="p">,</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">iEndOfStreamFlag</span><span class="p">);</span>
+      <span class="k">break</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">iFileSize</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">if</span> <span class="p">((</span><span class="n">pBuf</span><span class="p">[</span><span class="n">iBufPos</span> <span class="o">+</span> <span class="n">i</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">pBuf</span><span class="p">[</span><span class="n">iBufPos</span> <span class="o">+</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">pBuf</span><span class="p">[</span><span class="n">iBufPos</span> <span class="o">+</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">pBuf</span><span class="p">[</span><span class="n">iBufPos</span> <span class="o">+</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">3</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
+        <span class="o">&amp;&amp;</span> <span class="n">i</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">))</span> <span class="p">{</span>
+          <span class="k">break</span><span class="p">;</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+      <span class="n">iSliceSize</span> <span class="o">=</span> <span class="n">i</span><span class="p">;</span>
+      <span class="n">m_pDec</span><span class="o">-&gt;</span><span class="n">DecodeFrame2</span> <span class="p">(</span><span class="n">pBuf</span> <span class="o">+</span> <span class="n">iBufPos</span><span class="p">,</span> <span class="n">iSliceSize</span><span class="p">,</span> <span class="n">m_pData</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">m_sBufferInfo</span><span class="p">);</span>
+      <span class="n">m_pDec</span><span class="o">-&gt;</span><span class="n">DecodeFrame2</span> <span class="p">(</span><span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">m_pData</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">m_sBufferInfo</span><span class="p">);</span>
+      <span class="n">iBufPos</span> <span class="o">+=</span> <span class="n">iSliceSize</span><span class="p">;</span>
+      <span class="o">++</span> <span class="n">iSliceIndex</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">pBuf</span><span class="p">)</span> <span class="p">{</span>
+      <span class="n">delete</span><span class="p">[]</span> <span class="n">pBuf</span><span class="p">;</span>
+      <span class="n">pBuf</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+</code></pre></div></div>
+
+<p>My only real addition to this is these few lines</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span><span class="n">firstrun</span><span class="p">){</span>
+  <span class="n">Init</span><span class="p">();</span>
+  <span class="p">};</span>
+
+<span class="n">pBuf</span> <span class="o">=</span> <span class="n">new</span> <span class="kt">uint8_t</span><span class="p">[</span><span class="n">size</span> <span class="o">+</span> <span class="mi">4</span><span class="p">];</span>
+<span class="n">memcpy</span><span class="p">(</span><span class="n">pBuf</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+<span class="n">memcpy</span><span class="p">(</span><span class="n">pBuf</span> <span class="o">+</span> <span class="n">size</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">uiStartCode</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">4</span><span class="p">);</span> <span class="c1">//confirmed_safe_unsafe_usage</span>
+
+<span class="n">iFileSize</span> <span class="o">=</span> <span class="n">size</span><span class="p">;</span>
+</code></pre></div></div>
+<p>Basically it only initializes the codec once os it doesnt run out of memory instantly, and then I’ve just did some memcopy operations to replace the file input with our fuzzing input and size.</p>
+
+<h1 id="building-the-fuzzer">Building the fuzzer</h1>
+<p>To build the fuzzer just run this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -I ../../codec/api/svc -I ../../codec/decoder/core/inc/ -I ../../codec/common/inc/ -fsanitize=fuzzer dec_fuzzer.cpp -o fuzzer ../../libopenh264.a
+</code></pre></div></div>
+
+<h1 id="checking-coverage">Checking coverage</h1>
+<p>Here are the corresponding coverage builds for the harness and the library.
+Harness:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang++ -O1 -fno-omit-frame-pointer -g -ggdb3 -I ../../codec/api/svc -I ../../codec/decoder/core/inc/ -I ../../codec/common/inc/ -fprofile-instr-generate -fcoverage-mapping -fsanitize=fuzzer dec_fuzzer.cpp -o fuzzer ../../libopenh264.a -lpthread
+</code></pre></div></div>
+<p>Library:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>OS=linux ARCH=x86_64 CC=clang CXX=clang++ CFLAGS+="-fprofile-instr-generate -fcoverage-mapping -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=fuzzer-no-link" CXXFLAGS+="-fprofile-instr-generate -fcoverage-mapping -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=fuzzer-no-link" LDFLAGS+=-fsanitize=fuzzer-no-link make
+</code></pre></div></div>
+<p>To check coverage:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>./fuzzer ./inputs/* &amp;&amp; \
+llvm-profdata merge -sparse *.profraw -o default.profdata &amp;&amp; \
+llvm-cov show ./fuzzer -instr-profile=default.profdata -name=DecodeFrame2
+</code></pre></div></div>
+:ET
