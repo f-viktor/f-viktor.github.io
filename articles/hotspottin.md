@@ -12,13 +12,14 @@ For those use-cases, you can set up a Wi-Fi network and selectively proxy some o
 
 # The NetworkManager way
 
-If you are already using NetworkManager, this might be the easiest way to get this going but with ease of use, comes lack of customisability. NetworkManager has a built-in way to set up a hotspot. This will only work if your internet interface is also managed by NetworkManager.`wlp3s0` is the name of the Wi-Fi interface in this example. 
+If you are already using NetworkManager, this might be the easiest way to get this going but with ease of use, comes lack of customisability. NetworkManager has a built-in way to set up a hotspot. This will only work if your internet interface is also managed by NetworkManager. `wlp3s0` is the name of the Wi-Fi interface in this example. 
 ```
 nmcli device wifi hotspot ifname wlp3s0 con-name hotsp ssid myHotspot password plsnohack
 ```
-Then you can forward any port to your (transparent) proxy by:
+Then you can forward any port to your (transparent) proxy, for example 80 & 443:
 ```
 sudo iptables -t nat -A PREROUTING -i wlp3s0 -p tcp --dport 80 -j DNAT --to 127.0.0.1:80
+sudo iptables -t nat -A PREROUTING -i wlp3s0 -p tcp --dport 443 -j DNAT --to 127.0.0.1:443
 ```
 Bonus Tip! You can listen on low ports with your proxy without root privileges via:
 ```

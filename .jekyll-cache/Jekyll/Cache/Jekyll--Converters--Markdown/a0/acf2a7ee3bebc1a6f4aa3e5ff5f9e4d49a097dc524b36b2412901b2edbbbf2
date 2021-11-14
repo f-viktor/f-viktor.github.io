@@ -1,4 +1,4 @@
-I"�+<h1 id="when-to-do-this">When to do This</h1>
+I"U,<h1 id="when-to-do-this">When to do This</h1>
 
 <p>In short: when normal proxying just doesn’t cut it.<br />
 Let’s say you want to “debug” a mobile application that is not (or only partially) proxy-aware.  <br />
@@ -8,17 +8,18 @@ For those use-cases, you can set up a Wi-Fi network and selectively proxy some o
 
 <h1 id="the-networkmanager-way">The NetworkManager way</h1>
 
-<p>If you are already using NetworkManager, this might be the easiest way to get this going but with ease of use, comes lack of customisability. NetworkManager has a built-in way to set up a hotspot. <code class="language-plaintext highlighter-rouge">wlp3s0</code> is the name of the Wi-Fi interface in this example.</p>
+<p>If you are already using NetworkManager, this might be the easiest way to get this going but with ease of use, comes lack of customisability. NetworkManager has a built-in way to set up a hotspot. This will only work if your internet interface is also managed by NetworkManager. <code class="language-plaintext highlighter-rouge">wlp3s0</code> is the name of the Wi-Fi interface in this example.</p>
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nmcli device wifi hotspot ifname wlp3s0 con-name hotsp ssid myHotspot password plsnohack
 </code></pre></div></div>
-<p>Then you can forward any port to your (transparent) proxy by:</p>
+<p>Then you can forward any port to your (transparent) proxy, for example 80 &amp; 443:</p>
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo iptables -t nat -A PREROUTING -i wlp3s0 -p tcp --dport 80 -j DNAT --to 127.0.0.1:80
+sudo iptables -t nat -A PREROUTING -i wlp3s0 -p tcp --dport 443 -j DNAT --to 127.0.0.1:443
 </code></pre></div></div>
 <p>Bonus Tip! You can listen on low ports with your proxy without root privileges via:</p>
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sysctl net/ipv4/ip_unprivileged_port_start=80
 </code></pre></div></div>
 
-<h1 id="the-n0n-networkmanager-way">The N0N-NetworkManager way</h1>
+<h1 id="the-non-networkmanager-way">The non-NetworkManager way</h1>
 
 <p>First, do yourself a favor and</p>
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo su
