@@ -4,20 +4,23 @@
     <meta charset='utf-8'>
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <link rel="stylesheet" href="/assets/css/style.css?v=6b5cc315c0dd912d7dd6446abf30bfe48e6f08f4">
 
-<!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>f-viktor@github.io% | Hack the planet.</title>
-<meta name="generator" content="Jekyll v4.2.0" />
-<meta property="og:title" content="f-viktor@github.io%" />
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Introduction | f-viktor@github.io%</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Introduction" />
 <meta property="og:locale" content="en_US" />
 <meta name="description" content="Hack the planet." />
 <meta property="og:description" content="Hack the planet." />
+<link rel="canonical" href="http://localhost:4000/articles/libprotobuf.html" />
+<meta property="og:url" content="http://localhost:4000/articles/libprotobuf.html" />
 <meta property="og:site_name" content="f-viktor@github.io%" />
+<meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="f-viktor@github.io%" />
+<meta property="twitter:title" content="Introduction" />
 <script type="application/ld+json">
-{"description":"Hack the planet.","url":"/articles/libprotobuf.html","headline":"f-viktor@github.io%","@type":"WebPage","@context":"https://schema.org"}</script>
+{"@context":"https://schema.org","@type":"WebPage","description":"Hack the planet.","headline":"Introduction","url":"http://localhost:4000/articles/libprotobuf.html"}</script>
 <!-- End Jekyll SEO tag -->
 
 <script>
@@ -113,7 +116,7 @@
 
 <p>Libprotobuf-mutator is what brings these two together. It provides a macro for libfuzzer, that can be called in the fuzztarget to generate protobuf formatted fuzz objects. This looks as such:</p>
 
-<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include "src/libfuzzer/libfuzzer_macro.h"
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">"src/libfuzzer/libfuzzer_macro.h"</span><span class="cp">
 </span>
 <span class="n">DEFINE_PROTO_FUZZER</span><span class="p">(</span><span class="k">const</span> <span class="n">MyMessageType</span><span class="o">&amp;</span> <span class="n">input</span><span class="p">)</span> <span class="p">{</span>
   <span class="c1">// Code which needs to be fuzzed.</span>
@@ -134,19 +137,19 @@
 <h2 id="linking-the-protobuf-file-in-the-fuzztarget">Linking the protobuf file in the fuzztarget</h2>
 
 <p>To link the protobuf file, you’ll want to include the header (in this case test.pb.h) it in your <fuzztarget>.cc file like so:</fuzztarget></p>
-<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdint.h&gt;
-#include &lt;stddef.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;stdint.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stddef.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;string.h&gt;</span><span class="cp">
 </span>
-<span class="cp">#include &lt;glib.h&gt;
-#include "../debug.h"
-#include "../sdp-utils.h"
+<span class="cp">#include</span> <span class="cpf">&lt;glib.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">"../debug.h"</span><span class="cp">
+#include</span> <span class="cpf">"../sdp-utils.h"</span><span class="cp">
 </span>
 
-<span class="cp">#include "test.pb.h"
+<span class="cp">#include</span> <span class="cpf">"test.pb.h"</span><span class="cp">
 </span>
-<span class="cp">#include "src/libfuzzer/libfuzzer_macro.h"
+<span class="cp">#include</span> <span class="cpf">"src/libfuzzer/libfuzzer_macro.h"</span><span class="cp">
 </span><span class="n">protobuf_mutator</span><span class="o">::</span><span class="n">protobuf</span><span class="o">::</span><span class="n">LogSilencer</span> <span class="n">log_silincer</span><span class="p">;</span>
 
 <span class="kt">int</span> <span class="n">janus_log_level</span> <span class="o">=</span> <span class="n">LOG_NONE</span><span class="p">;</span>
@@ -203,7 +206,7 @@
 </code></pre></div></div>
 
 <p>Also add this to the build path of your fuzztarget.cc</p>
-<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include "src/libfuzzer/libfuzzer_macro.h"
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">"src/libfuzzer/libfuzzer_macro.h"</span><span class="cp">
 </span></code></pre></div></div>
 <p>then do</p>
 <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clang -c -O1 -fno-omit-frame-pointer -g -ggdb3 -fsanitize=address,undefined -fsanitize-address-use-after-scope -fno-sanitize-recover=undefined -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION  -fsanitize=fuzzer-no-link -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include  -I. -I./libprotobuf-mutator/ -I/home/dna/git/janus/janus-protobuf test.pb.cc -o /home/dna/git/janus/janus-protobuf/fuzzers/test.pb.o
@@ -257,18 +260,18 @@ janus_sdp *janus_sdp_parse(const char *sdp, char *error, size_t errlen);
 
 <h2 id="contents-of-fuzztarget">contents of fuzztarget</h2>
 
-<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdint.h&gt;
-#include &lt;stddef.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;stdint.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stddef.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;string.h&gt;</span><span class="cp">
 </span>
-<span class="cp">#include &lt;glib.h&gt;
-#include "../debug.h"
-#include "../sdp-utils.h"
+<span class="cp">#include</span> <span class="cpf">&lt;glib.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">"../debug.h"</span><span class="cp">
+#include</span> <span class="cpf">"../sdp-utils.h"</span><span class="cp">
 </span>
 
-<span class="cp">#include "sdp.pb.h"
-#include "src/libfuzzer/libfuzzer_macro.h"
+<span class="cp">#include</span> <span class="cpf">"sdp.pb.h"</span><span class="cp">
+#include</span> <span class="cpf">"src/libfuzzer/libfuzzer_macro.h"</span><span class="cp">
 </span><span class="n">protobuf_mutator</span><span class="o">::</span><span class="n">protobuf</span><span class="o">::</span><span class="n">LogSilencer</span> <span class="n">log_silincer</span><span class="p">;</span>
 
 

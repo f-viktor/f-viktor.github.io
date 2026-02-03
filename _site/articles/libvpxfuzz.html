@@ -4,20 +4,23 @@
     <meta charset='utf-8'>
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <link rel="stylesheet" href="/assets/css/style.css?v=6b5cc315c0dd912d7dd6446abf30bfe48e6f08f4">
 
-<!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>f-viktor@github.io% | Hack the planet.</title>
-<meta name="generator" content="Jekyll v4.2.0" />
-<meta property="og:title" content="f-viktor@github.io%" />
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>The 411 | f-viktor@github.io%</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="The 411" />
 <meta property="og:locale" content="en_US" />
 <meta name="description" content="Hack the planet." />
 <meta property="og:description" content="Hack the planet." />
+<link rel="canonical" href="http://localhost:4000/articles/libvpxfuzz.html" />
+<meta property="og:url" content="http://localhost:4000/articles/libvpxfuzz.html" />
 <meta property="og:site_name" content="f-viktor@github.io%" />
+<meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="f-viktor@github.io%" />
+<meta property="twitter:title" content="The 411" />
 <script type="application/ld+json">
-{"description":"Hack the planet.","url":"/articles/libvpxfuzz.html","headline":"f-viktor@github.io%","@type":"WebPage","@context":"https://schema.org"}</script>
+{"@context":"https://schema.org","@type":"WebPage","description":"Hack the planet.","headline":"The 411","url":"http://localhost:4000/articles/libvpxfuzz.html"}</script>
 <!-- End Jekyll SEO tag -->
 
 <script>
@@ -433,14 +436,14 @@ The two arguments are the fuzzing input <code class="language-plaintext highligh
 Therefore I modified calls so that they use the <code class="language-plaintext highlighter-rouge">*data</code> pointer instead of the infile.
 There could be many optimizations in a real fuzzer, but let’s see if we can even link this.</p>
 
-<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;string.h&gt;</span><span class="cp">
 </span>
-<span class="cp">#include "vpx/vpx_encoder.h"
+<span class="cp">#include</span> <span class="cpf">"vpx/vpx_encoder.h"</span><span class="cp">
 </span>
-<span class="cp">#include "../../libvpx/tools_common.h" //maybe unnecessary?
-#include "../../libvpx/video_common.h" //maybe unnecessary?
+<span class="cp">#include</span> <span class="cpf">"../../libvpx/tools_common.h"</span><span class="c1"> //maybe unnecessary?</span><span class="cp">
+#include</span> <span class="cpf">"../../libvpx/video_common.h"</span><span class="c1"> //maybe unnecessary?</span><span class="cp">
 </span>
 <span class="k">static</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">exec_name</span><span class="p">;</span>
 
@@ -749,14 +752,14 @@ llvm-cov show ./vpx_enc_fuzzer_vp8_cov -instr-profile=default.profdata -name=vpx
 
 <p>I guess that comparison doesn’t really work as I intended it to work. Let’s try a quick fix:</p>
 
-<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;string.h&gt;</span><span class="cp">
 </span>
-<span class="cp">#include "vpx/vpx_encoder.h"
+<span class="cp">#include</span> <span class="cpf">"vpx/vpx_encoder.h"</span><span class="cp">
 </span>
-<span class="cp">#include "../../libvpx/tools_common.h" //maybe unnecessary?
-#include "../../libvpx/video_common.h" //maybe unnecessary?
+<span class="cp">#include</span> <span class="cpf">"../../libvpx/tools_common.h"</span><span class="c1"> //maybe unnecessary?</span><span class="cp">
+#include</span> <span class="cpf">"../../libvpx/video_common.h"</span><span class="c1"> //maybe unnecessary?</span><span class="cp">
 </span>
 <span class="c1">//#include "../video_writer.h" unnecesary as we do not write anything</span>
 

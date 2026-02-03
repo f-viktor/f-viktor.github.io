@@ -4,20 +4,23 @@
     <meta charset='utf-8'>
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <link rel="stylesheet" href="/assets/css/style.css?v=6b5cc315c0dd912d7dd6446abf30bfe48e6f08f4">
 
-<!-- Begin Jekyll SEO tag v2.7.1 -->
-<title>f-viktor@github.io% | Hack the planet.</title>
-<meta name="generator" content="Jekyll v4.2.0" />
-<meta property="og:title" content="f-viktor@github.io%" />
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>The 411 | f-viktor@github.io%</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="The 411" />
 <meta property="og:locale" content="en_US" />
 <meta name="description" content="Hack the planet." />
 <meta property="og:description" content="Hack the planet." />
+<link rel="canonical" href="http://localhost:4000/articles/libh264fuzz.html" />
+<meta property="og:url" content="http://localhost:4000/articles/libh264fuzz.html" />
 <meta property="og:site_name" content="f-viktor@github.io%" />
+<meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary" />
-<meta property="twitter:title" content="f-viktor@github.io%" />
+<meta property="twitter:title" content="The 411" />
 <script type="application/ld+json">
-{"description":"Hack the planet.","url":"/articles/libh264fuzz.html","headline":"f-viktor@github.io%","@type":"WebPage","@context":"https://schema.org"}</script>
+{"@context":"https://schema.org","@type":"WebPage","description":"Hack the planet.","headline":"The 411","url":"http://localhost:4000/articles/libh264fuzz.html"}</script>
 <!-- End Jekyll SEO tag -->
 
 <script>
@@ -173,13 +176,13 @@ libprocessing.a
 <p>I used parts of the unit test <a href="https://github.com/cisco/openh264/blob/master/test/decoder/DecUT_DecExt.cpp">DecUT_DecExt.cpp</a> to write my fuzzer, as you can see it’s mostly just the re-writing part of the unit test:</p>
 
 <div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
-<span class="cp">#include "codec_def.h"
-#include "codec_app_def.h"
-#include "codec_api.h"
-#include "error_code.h"
-#include "wels_common_basis.h"
-#include "memory_align.h"
-#include "ls_defines.h"
+<span class="cp">#include</span> <span class="cpf">"codec_def.h"</span><span class="cp">
+#include</span> <span class="cpf">"codec_app_def.h"</span><span class="cp">
+#include</span> <span class="cpf">"codec_api.h"</span><span class="cp">
+#include</span> <span class="cpf">"error_code.h"</span><span class="cp">
+#include</span> <span class="cpf">"wels_common_basis.h"</span><span class="cp">
+#include</span> <span class="cpf">"memory_align.h"</span><span class="cp">
+#include</span> <span class="cpf">"ls_defines.h"</span><span class="cp">
 </span>
 <span class="n">using</span> <span class="n">namespace</span> <span class="n">WelsDec</span><span class="p">;</span>
 <span class="cp">#define BUF_SIZE 100

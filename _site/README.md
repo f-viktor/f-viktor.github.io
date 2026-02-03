@@ -1,14 +1,9 @@
 #install env:
-sudo pacman -S ruby
-gem install jekyll  
-gem install bundler  
+sudo pacman -S jekyll ruby-bundler
 
-export PATH=$PATH:~/.gem/ruby/2.7.0/bin/
+export GEM_HOME=$HOME/github/gem
+
 bundle install  
 
-to rebuild:
-jekyll serve  
+bundle exec jekyll serve
 
-
-for ruby 3.0:
-bundle add webrick

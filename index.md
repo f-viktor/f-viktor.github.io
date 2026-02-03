@@ -2,6 +2,10 @@
 layout: default
 ---
 
+# Wax Poetic
+
+[Better than Best Practices (en](./articles/betterpractices)/[日本語)](./articles/betterpractices_jp)  
+
 # Web Assembly (WASM) CTF
 
 [Setting up the debugging environment](./articles/wasm_debug)  
